@@ -1,0 +1,4 @@
+project_id = "napeofeenweerjhqucua"
+
+[functions.google-forms-satisfaction]
+verify_jwt = false
