@@ -244,18 +244,7 @@ const Index = () => {
                 <span className="h-px flex-1 bg-white/20" />
               </div>
 
-              <GoogleSignInButton />
-
-              <p className="mt-6 text-center text-sm text-white/80">
-                Não tem uma conta?{' '}
-                <button
-                  type="button"
-                  onClick={() => setShowSignup(true)}
-                  className="text-amber-300 transition-colors duration-300 hover:text-white"
-                >
-                  Cadastre-se
-                </button>
-              </p>
+           
             </form>
           ) : (
             <div className="glass-card animate-fade-in rounded-2xl p-8">
