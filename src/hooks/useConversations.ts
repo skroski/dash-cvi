@@ -135,6 +135,98 @@ function toConversation(row: SearchConversationRow): Conversation {
   };
 }
 
+async function fetchConversationsFallback(
+  searchTerm: string,
+  page: number,
+  limit: number
+): Promise<{ rows: SearchConversationRow[]; total: number }> {
+  let matchedSessionIdsFromClients: string[] = [];
+
+  if (searchTerm) {
+    const { data: matchedClients } = await supabase
+      .from('dados_cliente')
+      .select('sessionid')
+      .or(`nome.ilike.%${searchTerm}%,telefone.ilike.%${searchTerm}%,nome_pet.ilike.%${searchTerm}%`)
+      .limit(100);
+
+    if (matchedClients) {
+      matchedSessionIdsFromClients = matchedClients
+        .map(c => c.sessionid)
+        .filter((id): id is string => Boolean(id));
+    }
+  }
+
+  let query = supabase
+    .from('n8n_chat_histories')
+    .select('session_id, id, message, data')
+    .order('id', { ascending: false });
+
+  if (searchTerm) {
+    if (matchedSessionIdsFromClients.length > 0) {
+      query = query.or(
+        `session_id.ilike.%${searchTerm}%,session_id.in.(${matchedSessionIdsFromClients.join(',')})`
+      );
+    } else {
+      query = query.ilike('session_id', `%${searchTerm}%`);
+    }
+  }
+
+  const { data: historyData, error: historyError } = await query.limit(500);
+  if (historyError) throw historyError;
+
+  const latestBySession = new Map<string, (typeof historyData)[number]>();
+  for (const item of historyData || []) {
+    if (item.session_id && !latestBySession.has(item.session_id)) {
+      latestBySession.set(item.session_id, item);
+    }
+  }
+
+  const sessions = Array.from(latestBySession.values());
+  const sessionIds = sessions.map(s => s.session_id);
+
+  const clientsMap = new Map<string, Record<string, unknown>>();
+  if (sessionIds.length > 0) {
+    const { data: clientsData } = await supabase
+      .from('dados_cliente')
+      .select('*')
+      .in('sessionid', sessionIds);
+
+    if (clientsData) {
+      for (const client of clientsData) {
+        if (client.sessionid && !clientsMap.has(client.sessionid)) {
+          clientsMap.set(client.sessionid, client as Record<string, unknown>);
+        }
+      }
+    }
+  }
+
+  const offset = page * limit;
+  const pagedSessions = sessions.slice(offset, offset + limit);
+
+  const rows: SearchConversationRow[] = pagedSessions.map(s => {
+    const client = clientsMap.get(s.session_id);
+    return {
+      session_id: s.session_id,
+      latest_id: Number(s.id),
+      message: s.message as SearchConversationRow['message'],
+      message_date: s.data,
+      client_id: client?.id ? Number(client.id) : null,
+      client_name: (client?.nome as string) ?? null,
+      client_phone: (client?.telefone as string) ?? null,
+      client_email: (client?.email as string) ?? null,
+      pet_name: (client?.nome_pet as string) ?? null,
+      pet_size: (client?.porte_pet as string) ?? null,
+      pet_breed: (client?.raca_pet as string) ?? null,
+      cpf_cnpj: (client?.cpf_cnpj as string) ?? null,
+      service: (client?.servico as string) ?? null,
+      asaas_customer_id: (client?.asaas_customer_id as string) ?? null,
+      total_count: sessions.length,
+    };
+  });
+
+  return { rows, total: sessions.length };
+}
+
 export function useConversations(searchTerm = '') {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,22 +326,46 @@ export function useConversations(searchTerm = '') {
         setSearching(true);
       }
 
+      let rows: SearchConversationRow[] = [];
+      let resultTotal: number | null = null;
+
       const { data, error } = await supabase.rpc('search_conversations', {
         p_search: debouncedSearchTerm || null,
         p_limit: ITEMS_PER_PAGE,
         p_offset: offset,
       });
 
-      if (error) throw error;
+      if (error) {
+        // Fall back to client query if RPC function does not exist in Supabase DB (PGRST202 / 404)
+        const isMissingFunction =
+          error.code === 'PGRST202' ||
+          error.code === '42883' ||
+          error.message?.includes('search_conversations');
+
+        if (isMissingFunction) {
+          console.warn('RPC search_conversations não encontrada no Supabase. Utilizando fallback direto...');
+          const fallbackResult = await fetchConversationsFallback(
+            debouncedSearchTerm,
+            page,
+            ITEMS_PER_PAGE
+          );
+          rows = fallbackResult.rows;
+          resultTotal = fallbackResult.total;
+        } else {
+          throw error;
+        }
+      } else {
+        rows = (data || []) as SearchConversationRow[];
+        resultTotal = rows.length > 0
+          ? Number(rows[0].total_count)
+          : page === 0
+            ? 0
+            : null;
+      }
+
       if (requestId !== requestIdRef.current) return;
 
-      const rows = (data || []) as SearchConversationRow[];
       const pageConversations = rows.map(toConversation);
-      const resultTotal = rows.length > 0
-        ? Number(rows[0].total_count)
-        : page === 0
-          ? 0
-          : null;
 
       if (resultTotal !== null) {
         setTotalCount(resultTotal);
