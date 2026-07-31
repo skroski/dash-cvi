@@ -7,23 +7,31 @@ interface ServiceData {
 }
 
 async function fetchServiceStats(): Promise<ServiceData[]> {
-  const { data, error } = await supabase
-    .from('dados_cliente')
-    .select('servico')
-    .not('servico', 'is', null);
+  try {
+    const { data, error } = await supabase
+      .from('dados_cliente')
+      .select('servico')
+      .not('servico', 'is', null);
 
-  if (error) throw error;
-
-  const serviceCounts: Record<string, number> = {};
-  data.forEach((item) => {
-    if (item.servico) {
-      serviceCounts[item.servico] = (serviceCounts[item.servico] || 0) + 1;
+    if (error) {
+      if (error.code === 'PGRST204') return [];
+      throw error;
     }
-  });
 
-  return Object.entries(serviceCounts)
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value);
+    const serviceCounts: Record<string, number> = {};
+    data?.forEach((item) => {
+      if (item.servico) {
+        serviceCounts[item.servico] = (serviceCounts[item.servico] || 0) + 1;
+      }
+    });
+
+    return Object.entries(serviceCounts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  } catch (err) {
+    console.warn('Estatísticas de serviço indisponíveis:', err);
+    return [];
+  }
 }
 
 export function useServiceStats(enabled = true) {

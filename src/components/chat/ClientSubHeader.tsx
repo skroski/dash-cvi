@@ -30,15 +30,26 @@ const ClientSubHeader = ({ selectedConversation, onConversationUpdate, updateCon
   const handleSave = async () => {
     if (editedContact && onConversationUpdate && selectedConversation?.clientData) {
       try {
-        const { error } = await supabase
+        const updateData: Record<string, any> = {
+          nome: editedContact.nome,
+          email: editedContact.email,
+          cpf_cnpj: editedContact.cpf_cnpj,
+          servico: editedContact.servico,
+        };
+
+        let { error } = await supabase
           .from('dados_cliente')
-          .update({
-            nome: editedContact.nome,
-            email: editedContact.email,
-            cpf_cnpj: editedContact.cpf_cnpj,
-            servico: editedContact.servico,
-          })
+          .update(updateData)
           .eq('id', selectedConversation.clientData.id);
+
+        if (error && error.code === 'PGRST204' && 'servico' in updateData) {
+          delete updateData.servico;
+          const retry = await supabase
+            .from('dados_cliente')
+            .update(updateData)
+            .eq('id', selectedConversation.clientData.id);
+          error = retry.error;
+        }
 
         if (error) throw error;
 
