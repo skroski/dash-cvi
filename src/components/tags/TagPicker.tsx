@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Check, Plus, Settings2, Tag as TagIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTags } from '@/hooks/useTags';
-import { TAG_COLORS } from '@/types/crm';
+import { Tag, TAG_COLORS } from '@/types/crm';
 import TagManagerDialog from './TagManagerDialog';
 
 interface TagPickerProps {

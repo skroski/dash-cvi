@@ -1,42 +1,59 @@
+import type { ReminderDelivery } from './reminder';
 
-// Define event types based on the API response
+// Tipos para integração direta com a Google Calendar API v3
+
+export type GoogleCalendar = {
+  id: string;
+  summary: string;
+  description?: string;
+  backgroundColor?: string;
+  foregroundColor?: string;
+  primary?: boolean;
+  selected?: boolean;
+  timeZone?: string;
+};
+
 export type CalendarAttendee = {
   email?: string;
-  responseStatus?: 'needsAction' | 'declined' | 'tentative' | 'accepted';
+  displayName?: string;
 };
 
 export type CalendarEvent = {
   id: string;
   summary: string;
-  start: string;
-  end: string;
-  status: string;
-  htmlLink: string;
+  start: string; // ISO string
+  end: string;   // ISO string
+  htmlLink?: string;
   description?: string;
+  location?: string;
+  calendarId: string;
+  calendarName: string;
+  calendarColor?: string;
+  petName?: string;
+  ownerName?: string;
+  phone?: string;
+  status?: string;
+  service?: string;
   attendees?: (CalendarAttendee | null)[];
 };
 
-export type EventFormData = {
-  summary: string;
-  description: string;
-  email: string;
-  date: Date;
-  startTime: string;
-  endTime: string;
+export type UnifiedCalendarItem = {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date;
+  source: 'google' | 'reminder';
+  sourceName: string;
+  color?: string;
+  petName?: string;
+  ownerName?: string;
+  phone?: string;
+  status?: string;
+  service?: string;
+  description?: string;
+  location?: string;
+  isBlocked?: boolean;
+  htmlLink?: string;
+  rawGoogleEvent?: CalendarEvent;
+  rawReminder?: ReminderDelivery;
 };
-
-// Appointment types (mock data)
-export type AppointmentStatus = 'confirmado' | 'pendente' | 'cancelado';
-
-export type Appointment = {
-  id: number;
-  petName: string;
-  ownerName: string;
-  phone: string;
-  date: Date;
-  service: string;
-  status: AppointmentStatus;
-  notes: string;
-};
-
-export type AppointmentFormData = Omit<Appointment, 'id'>;

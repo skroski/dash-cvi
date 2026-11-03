@@ -22,6 +22,8 @@ interface StatCardProps {
   loading?: boolean;
   href?: string;
   className?: string;
+  /** Âncora para o tour guiado. */
+  dataTour?: string;
 }
 
 const StatCard = ({
@@ -33,11 +35,13 @@ const StatCard = ({
   loading = false,
   href,
   className,
+  dataTour,
 }: StatCardProps) => {
   const styles = toneStyles[tone];
 
   return (
     <Card
+      data-tour={dataTour}
       className={cn(
         'relative shadow-sm transition-shadow duration-200',
         href && 'hover:shadow-md focus-within:ring-2 focus-within:ring-ring',

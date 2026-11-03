@@ -4,7 +4,7 @@ import ConversationList from './ConversationList';
 import ChatArea from './ChatArea';
 import ClientInfoPanel from './ClientInfoPanel';
 import ClientInfoSheet from './ClientInfoSheet';
-import ConversationSubHeader from './ConversationSubHeader';
+import ConversationSubHeader, { ChatFilterCounts } from './ConversationSubHeader';
 import MessagesSubHeader from './MessagesSubHeader';
 import ClientSubHeader from './ClientSubHeader';
 import { Conversation, ChatMessage, ChatViewMode, ConversationAssignmentFilter, ConversationStatusFilter } from '@/types/chat';
@@ -35,8 +35,6 @@ interface ChatLayoutProps {
   pauseStatus?: PauseStatusMap;
   onRefresh?: () => void;
   isRefreshing?: boolean;
-  autoRefresh?: boolean;
-  onToggleAutoRefresh?: () => void;
   showOnlyPaused?: boolean;
   onTogglePausedFilter?: () => void;
   showOnlyUnanswered?: boolean;
@@ -44,6 +42,9 @@ interface ChatLayoutProps {
   showOnlyPendencias?: boolean;
   onTogglePendenciasFilter?: () => void;
   viewMode?: ChatViewMode;
+  showInactiveGroups?: boolean;
+  onToggleInactiveGroupsFilter?: () => void;
+  inactiveGroupsCount?: number;
   tagFilterId?: number | null;
   onTagFilterChange?: (tagId: number | null) => void;
   tags?: Tag[];
@@ -52,11 +53,15 @@ interface ChatLayoutProps {
   assignmentFilter?: ConversationAssignmentFilter;
   onAssignmentFilterChange?: (filter: ConversationAssignmentFilter) => void;
   atendenteAtivoNome?: string | null;
+  filterCounts?: ChatFilterCounts;
   tagsPorCliente?: Map<number, Tag[]>;
   abertasPorCliente?: Map<number, ClientPendencia[]>;
   onConversationUpdate?: () => void;
+  onRefreshMessages?: () => void;
+  isRefreshingMessages?: boolean;
   updateConversationLocal?: (sessionId: string, data: Partial<Conversation>) => void;
   onHistoryDeleted?: (sessionId: string) => void;
+  conversationPageSize?: number;
 }
 
 const ChatLayout = ({
@@ -82,8 +87,6 @@ const ChatLayout = ({
   pauseStatus,
   onRefresh,
   isRefreshing = false,
-  autoRefresh = false,
-  onToggleAutoRefresh,
   showOnlyPaused = false,
   onTogglePausedFilter,
   showOnlyUnanswered = false,
@@ -91,6 +94,9 @@ const ChatLayout = ({
   showOnlyPendencias = false,
   onTogglePendenciasFilter,
   viewMode = 'chats',
+  showInactiveGroups = false,
+  onToggleInactiveGroupsFilter,
+  inactiveGroupsCount,
   tagFilterId = null,
   onTagFilterChange,
   tags,
@@ -99,11 +105,15 @@ const ChatLayout = ({
   assignmentFilter = 'todas',
   onAssignmentFilterChange,
   atendenteAtivoNome = null,
+  filterCounts,
   tagsPorCliente,
   abertasPorCliente,
   onConversationUpdate,
+  onRefreshMessages,
+  isRefreshingMessages = false,
   updateConversationLocal,
-  onHistoryDeleted
+  onHistoryDeleted,
+  conversationPageSize = 200
 }: ChatLayoutProps) => {
   const isMobile = useIsMobile();
   const [isInfoSheetOpen, setIsInfoSheetOpen] = useState(false);
@@ -131,8 +141,6 @@ const ChatLayout = ({
         searching={searchingConversations}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
-        autoRefresh={autoRefresh}
-        onToggleAutoRefresh={onToggleAutoRefresh}
         showOnlyPaused={showOnlyPaused}
         onTogglePausedFilter={onTogglePausedFilter}
         showOnlyUnanswered={showOnlyUnanswered}
@@ -140,6 +148,9 @@ const ChatLayout = ({
         showOnlyPendencias={showOnlyPendencias}
         onTogglePendenciasFilter={onTogglePendenciasFilter}
         viewMode={viewMode}
+        showInactiveGroups={showInactiveGroups}
+        onToggleInactiveGroupsFilter={onToggleInactiveGroupsFilter}
+        inactiveGroupsCount={inactiveGroupsCount}
         tagFilterId={tagFilterId}
         onTagFilterChange={onTagFilterChange}
         tags={tags}
@@ -148,6 +159,7 @@ const ChatLayout = ({
         assignmentFilter={assignmentFilter}
         onAssignmentFilterChange={onAssignmentFilterChange}
         atendenteAtivoNome={atendenteAtivoNome}
+        filterCounts={filterCounts}
       />
       <div className="min-h-0 flex-1 overflow-hidden">
         <ConversationList
@@ -165,6 +177,7 @@ const ChatLayout = ({
           tagsPorCliente={tagsPorCliente}
           abertasPorCliente={abertasPorCliente}
           onHistoryDeleted={onHistoryDeleted}
+          conversationPageSize={conversationPageSize}
           emptyTitle={
             viewMode === 'groups'
               ? 'Nenhum grupo encontrado'
@@ -228,19 +241,34 @@ const ChatLayout = ({
   // ─── Desktop: três painéis redimensionáveis ───
   return (
     <ResizablePanelGroup direction="horizontal" className="h-full">
-      <ResizablePanel defaultSize={25} minSize={20} maxSize={30} className="flex flex-col bg-card">
+      <ResizablePanel
+        defaultSize={25}
+        minSize={20}
+        maxSize={30}
+        className="flex flex-col bg-card"
+        data-tour="chat-panel-list"
+      >
         {conversationPanel}
       </ResizablePanel>
 
       <ResizableHandle withHandle />
 
-      <ResizablePanel defaultSize={50} minSize={40} className="flex flex-col bg-background">
+      <ResizablePanel
+        defaultSize={50}
+        minSize={40}
+        className="flex flex-col bg-background"
+        data-tour="chat-panel-thread"
+      >
         <MessagesSubHeader
           selectedConversation={selectedConversation}
           messages={messages}
           onSearchMessages={onSearchMessages}
         />
-        <div className="flex-1 overflow-y-scroll">
+        {/* min-h-0 é obrigatório: sem ele um item flex não encolhe abaixo do
+            conteúdo, o viewport interno cresce até a altura total da thread e a
+            rolagem acontece aqui fora — fora do alcance do MessageList. Mesmo
+            padrão do painel de informações do cliente abaixo. */}
+        <div className="min-h-0 flex-1 overflow-hidden">
           <ChatArea
             selectedChat={selectedChat}
             selectedConversation={selectedConversation}
@@ -254,7 +282,13 @@ const ChatLayout = ({
 
       <ResizableHandle withHandle />
 
-      <ResizablePanel defaultSize={25} minSize={20} maxSize={30} className="flex flex-col bg-card">
+      <ResizablePanel
+        defaultSize={25}
+        minSize={20}
+        maxSize={30}
+        className="flex flex-col bg-card"
+        data-tour="chat-panel-client"
+      >
         <ClientSubHeader
           selectedConversation={selectedConversation}
           onConversationUpdate={handleConversationUpdate}

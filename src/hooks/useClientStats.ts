@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { MetricsPeriod, getPeriodStart, bucketKey, bucketLabels } from '@/lib/metricsPeriod';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 
 export interface GrowthPoint {
   month: string;
@@ -53,43 +54,81 @@ async function fetchClientStats(period: MetricsPeriod): Promise<ClientStats> {
 
   if (totalRes.error) throw totalRes.error;
 
-  // Crescimento: uma única query limitada ao período, bucketing no cliente
-  const { data: createdRows, error: createdError } = await supabase
-    .from('dados_cliente')
-    .select('created_at')
-    .gte('created_at', periodStart.toISOString());
-
-  if (createdError) throw createdError;
-
-  const buckets: Record<string, number> = {};
-  bucketLabels(period).forEach((label) => {
-    buckets[label] = 0;
-  });
-  (createdRows ?? []).forEach((row) => {
-    if (!row.created_at) return;
-    const key = bucketKey(new Date(row.created_at), period);
-    if (key in buckets) buckets[key]++;
-  });
-  const monthlyGrowth: GrowthPoint[] = Object.entries(buckets).map(([month, clients]) => ({
-    month,
-    clients,
-  }));
-
-  // Raças de pets
-  const { data: petsData } = await supabase
-    .from('dados_cliente')
-    .select('raca_pet')
-    .not('raca_pet', 'is', null);
-
-  const breedCounts: Record<string, number> = {};
-  petsData?.forEach((pet) => {
-    if (pet.raca_pet) {
-      breedCounts[pet.raca_pet] = (breedCounts[pet.raca_pet] || 0) + 1;
+  // Crescimento: tenta RPC no PostgreSQL; caso não esteja disponível, faz query limitada ao período
+  let monthlyGrowth: GrowthPoint[] = [];
+  try {
+    const { data: rpcGrowth, error: rpcGrowthErr } = await (supabase.rpc as any)('get_client_growth_stats', {
+      p_start_date: periodStart.toISOString(),
+    });
+    if (!rpcGrowthErr && Array.isArray(rpcGrowth)) {
+      const buckets: Record<string, number> = {};
+      bucketLabels(period).forEach((label) => {
+        buckets[label] = 0;
+      });
+      rpcGrowth.forEach((r: any) => {
+        if (r.bucket && r.bucket in buckets) {
+          buckets[r.bucket] = Number(r.count) || 0;
+        }
+      });
+      monthlyGrowth = Object.entries(buckets).map(([month, clients]) => ({
+        month,
+        clients,
+      }));
+    } else {
+      throw rpcGrowthErr;
     }
-  });
-  const petBreeds: PetBreed[] = Object.entries(breedCounts)
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value);
+  } catch {
+    const createdRows = await fetchAllRows<{ created_at: string | null }>((from, to) =>
+      supabase
+        .from('dados_cliente')
+        .select('created_at')
+        .gte('created_at', periodStart.toISOString())
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+
+    const buckets: Record<string, number> = {};
+    bucketLabels(period).forEach((label) => {
+      buckets[label] = 0;
+    });
+    createdRows.forEach((row) => {
+      if (!row.created_at) return;
+      const key = bucketKey(new Date(row.created_at), period);
+      if (key in buckets) buckets[key]++;
+    });
+    monthlyGrowth = Object.entries(buckets).map(([month, clients]) => ({
+      month,
+      clients,
+    }));
+  }
+
+  // Raças de pets: tenta RPC no PostgreSQL (agrega em ~1 KB no banco); fallback leve limit 1000
+  let petBreeds: PetBreed[] = [];
+  try {
+    const { data: rpcBreeds, error: rpcErr } = await (supabase.rpc as any)('get_pet_breed_stats');
+    if (!rpcErr && Array.isArray(rpcBreeds)) {
+      petBreeds = rpcBreeds.map((r: any) => ({ name: r.name, value: Number(r.value) || 0 }));
+    } else {
+      throw rpcErr;
+    }
+  } catch {
+    const { data: fallbackPets } = await supabase
+      .from('dados_cliente')
+      .select('raca_pet')
+      .not('raca_pet', 'is', null)
+      .order('id', { ascending: false })
+      .limit(1000);
+
+    const breedCounts: Record<string, number> = {};
+    (fallbackPets || []).forEach((pet) => {
+      if (pet.raca_pet) {
+        breedCounts[pet.raca_pet] = (breedCounts[pet.raca_pet] || 0) + 1;
+      }
+    });
+    petBreeds = Object.entries(breedCounts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }
 
   // Clientes recentes
   const { data: recentClientsData } = await supabase

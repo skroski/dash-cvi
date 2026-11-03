@@ -1,5 +1,6 @@
 import React from 'react';
-import { ArrowLeft, Phone, Info, Users } from 'lucide-react';
+import { ArrowLeft, Phone, Info, Users, LogOut, Megaphone, Timer } from 'lucide-react';
+import { formatarTimerTemporario } from '@/lib/grupos';
 import { Button } from '@/components/ui/button';
 import { Conversation } from '@/types/chat';
 import UserAvatar from '@/components/shared/UserAvatar';
@@ -61,10 +62,19 @@ const ChatThreadHeader = ({
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             {selectedConversation.isGroup ? (
               <span className="flex items-center gap-1">
-                <Users size={12} aria-hidden="true" />
-                {selectedConversation.groupParticipants
-                  ? `Grupo · ${selectedConversation.groupParticipants} participantes`
-                  : 'Grupo do WhatsApp'}
+                {selectedConversation.isGroupActive === false ? (
+                  <>
+                    <LogOut size={12} aria-hidden="true" />
+                    Você não faz mais parte deste grupo — sem mensagens novas
+                  </>
+                ) : (
+                  <>
+                    <Users size={12} aria-hidden="true" />
+                    {selectedConversation.groupParticipants
+                      ? `Grupo · ${selectedConversation.groupParticipants} participantes`
+                      : 'Grupo do WhatsApp'}
+                  </>
+                )}
               </span>
             ) : (
               <span className="flex items-center gap-1">
@@ -75,19 +85,43 @@ const ChatThreadHeader = ({
             {selectedConversation.petName && selectedConversation.petName !== 'Não informado' && (
               <span className="hidden truncate sm:inline">Pet: {selectedConversation.petName}</span>
             )}
+            {/* O que a Uazapi informa do grupo e muda o que dá para fazer aqui */}
+            {selectedConversation.isGroup && selectedConversation.groupSomenteLeitura && (
+              <span
+                className="flex items-center gap-1 text-warning"
+                title="Só administradores podem enviar mensagens neste grupo e a instância não é admin."
+              >
+                <Megaphone size={12} aria-hidden="true" />
+                Somente leitura
+              </span>
+            )}
+            {selectedConversation.isGroup && !!selectedConversation.groupTimerTemporario && (
+              <span
+                className="flex items-center gap-1"
+                title="Mensagens temporárias ativas: o WhatsApp apaga as mensagens após esse prazo, então o histórico antigo não fica disponível."
+              >
+                <Timer size={12} aria-hidden="true" />
+                Somem em{' '}
+                {formatarTimerTemporario(selectedConversation.groupTimerTemporario)}
+              </span>
+            )}
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          <ConversationStatusControl sessionId={selectedConversation.sessionId} />
+          {/* Status da conversa, agendamento e atribuição são do fluxo de
+              atendimento individual — não fazem sentido num grupo. */}
           {!selectedConversation.isGroup && (
-            <ScheduledMessagesDialog conversation={selectedConversation} />
+            <>
+              <ConversationStatusControl sessionId={selectedConversation.sessionId} />
+              <ScheduledMessagesDialog conversation={selectedConversation} />
+              <AtendimentoControl
+                sessionId={selectedConversation.sessionId}
+                clientId={selectedConversation.clientData?.id}
+                clienteNome={selectedConversation.name}
+              />
+            </>
           )}
-          <AtendimentoControl
-            sessionId={selectedConversation.sessionId}
-            clientId={selectedConversation.clientData?.id}
-            clienteNome={selectedConversation.name}
-          />
           {onOpenInfo && (
             <Button
               size="icon"

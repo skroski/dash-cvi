@@ -1,4 +1,4 @@
-export type Papel = 'admin' | 'lider' | 'atendente';
+export type Papel = 'admin' | 'lider' | 'atendente' | 'veterinario' | 'totem';
 
 export interface Perfil {
   id: string;
@@ -15,15 +15,19 @@ export const PAPEL_LABEL: Record<Papel, string> = {
   admin: 'Administrador',
   lider: 'Líder',
   atendente: 'Atendente',
+  veterinario: 'Veterinário',
+  totem: 'Totem',
 };
 
 export const PAPEL_DESCRICAO: Record<Papel, string> = {
   admin: 'Enxerga toda a operação, gerencia usuários e consulta a auditoria completa.',
   lider: 'Acompanha a equipe, atribui atendimentos e consulta a auditoria da equipe.',
   atendente: 'Trabalha nos próprios atendimentos e controla o próprio status.',
+  veterinario: 'Visão simplificada com foco na agenda e chamada de pacientes no consultório.',
+  totem: 'Aparelho de autoatendimento na entrada: só emite senha da fila. O bloqueio dos demais dados é feito por regras no banco (ver a auditoria de segurança da fila).',
 };
 
-export const PAPEIS: Papel[] = ['admin', 'lider', 'atendente'];
+export const PAPEIS: Papel[] = ['admin', 'lider', 'atendente', 'veterinario', 'totem'];
 
 // ---------------------------------------------------------------------------
 // Status operacional

@@ -1,56 +1,64 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   fetchCalendarEvents, 
   refreshCalendarEventsPost, 
   addCalendarEvent, 
   editCalendarEvent, 
-  deleteCalendarEvent 
+  deleteCalendarEvent,
+  getCachedEvents
 } from '@/services/calendarApi';
 import { CalendarEvent, EventFormData } from '@/types/calendar';
 import { AgendaType } from '@/hooks/useAgendaType';
 import { toast } from 'sonner';
 
-export function useCalendarEvents(agendaType: AgendaType = 'consultaveterinaria', selectedDate?: Date | null) {
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+export function useCalendarEvents(agendaType: AgendaType = 'todas', selectedDate?: Date | null) {
+  // Inicializar com cache se disponível
+  const initialCache = useRef(getCachedEvents(agendaType));
+  const [events, setEvents] = useState<CalendarEvent[]>(initialCache.current.events);
+  const [isLoading, setIsLoading] = useState(initialCache.current.events.length === 0);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(initialCache.current.lastUpdated);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Function to fetch events
-  const fetchEvents = useCallback(async () => {
+  // Carregar dados da agenda
+  const fetchEvents = useCallback(async (isManualSync = false) => {
+    if (isManualSync) {
+      setIsSyncing(true);
+    } else if (events.length === 0) {
+      setIsLoading(true);
+    }
+
     try {
       const fetchedEvents = await fetchCalendarEvents(agendaType, selectedDate);
       setEvents(fetchedEvents);
-      setLastUpdated(new Date());
+      const now = new Date();
+      setLastUpdated(now);
       setError(null);
+      if (isManualSync) {
+        if (fetchedEvents.length > 0) {
+          toast.success(`${fetchedEvents.length} agendamento(s) sincronizado(s) com sucesso!`);
+        } else {
+          toast.info("Sincronização concluída (nenhum evento retornado pela agenda).");
+        }
+      }
     } catch (err) {
-      console.error(`Error in useCalendarEvents for ${agendaType}:`, err);
-      setError(err instanceof Error ? err : new Error('Unknown error occurred'));
-      
-      // Only show the toast if we don't already have events loaded
-      if (events.length === 0) {
-        toast.error("Não conseguimos atualizar os eventos, tentando novamente em breve...");
+      console.warn(`[useCalendarEvents] Erro ao sincronizar ${agendaType}:`, err);
+      const errorObj = err instanceof Error ? err : new Error('Falha ao conectar com a agenda');
+      setError(errorObj);
+      if (isManualSync) {
+        toast.error("Não foi possível sincronizar com a agenda. Exibindo dados locais.");
       }
     } finally {
       setIsLoading(false);
+      setIsSyncing(false);
     }
-  }, [events.length, selectedDate, agendaType]);
+  }, [agendaType, selectedDate, events.length]);
 
-  // Function to refresh events using POST method
-  const refreshEventsPost = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const refreshedEvents = await refreshCalendarEventsPost(agendaType, selectedDate);
-      setEvents(refreshedEvents);
-      setLastUpdated(new Date());
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error('Unknown error occurred'));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [selectedDate, agendaType]);
+  // Função para sincronização manual (botão "Sincronizar")
+  const syncEvents = useCallback(() => {
+    return fetchEvents(true);
+  }, [fetchEvents]);
 
   // Add a new event
   const addEvent = async (formData: EventFormData) => {
@@ -58,7 +66,7 @@ export function useCalendarEvents(agendaType: AgendaType = 'consultaveterinaria'
     try {
       const success = await addCalendarEvent(formData, agendaType);
       if (success) {
-        await fetchEvents(); // Refresh events
+        await fetchEvents(false);
       }
       return success;
     } finally {
@@ -72,7 +80,7 @@ export function useCalendarEvents(agendaType: AgendaType = 'consultaveterinaria'
     try {
       const success = await editCalendarEvent(eventId, formData, agendaType);
       if (success) {
-        await fetchEvents(); // Refresh events
+        await fetchEvents(false);
       }
       return success;
     } finally {
@@ -86,7 +94,7 @@ export function useCalendarEvents(agendaType: AgendaType = 'consultaveterinaria'
     try {
       const success = await deleteCalendarEvent(eventId, agendaType);
       if (success) {
-        await fetchEvents(); // Refresh events
+        await fetchEvents(false);
       }
       return success;
     } finally {
@@ -94,28 +102,29 @@ export function useCalendarEvents(agendaType: AgendaType = 'consultaveterinaria'
     }
   };
 
-  // Initial fetch on mount or when selected date changes
+  // Initial fetch on mount or when selected date or agendaType changes
   useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents, selectedDate, agendaType]);
+    fetchEvents(false);
+  }, [fetchEvents]);
 
-  // Setup polling every 30 seconds
+  // Polling a cada 60 segundos
   useEffect(() => {
     const intervalId = setInterval(() => {
-      console.log(`Polling for ${agendaType} calendar events...`);
-      fetchEvents();
-    }, 30000); // 30 seconds
+      fetchEvents(false);
+    }, 60000);
 
     return () => clearInterval(intervalId);
-  }, [fetchEvents, agendaType]);
+  }, [fetchEvents]);
 
   return { 
     events, 
     isLoading, 
+    isSyncing,
     error, 
     lastUpdated, 
-    refreshEvents: fetchEvents,
-    refreshEventsPost,
+    syncEvents,
+    refreshEvents: () => fetchEvents(true),
+    refreshEventsPost: () => fetchEvents(true),
     addEvent,
     editEvent,
     deleteEvent,

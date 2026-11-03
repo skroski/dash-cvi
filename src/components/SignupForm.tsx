@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { PawPrint, Mail, Lock, Eye, EyeOff, User } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import SocialLoginButtons from './SocialLoginButtons';
 
 const signupSchema = z.object({
   email: z.string().email({ message: "Email inválido" }),
@@ -114,7 +113,7 @@ const SignupForm = ({ onSuccess }: { onSuccess: () => void }) => {
         Crie sua conta
       </h1>
       <p className="text-white/80 text-center mb-6">
-        Junte-se a VetBots
+        Junte-se ao C.V.I. - Centro Veterinário Integrado
       </p>
 
       <div className="space-y-4">

@@ -57,11 +57,12 @@ const UsersPage = () => {
     <PageContainer>
       <PageHeader
         title="Usuários e auditoria"
+        dataTour="users-header"
         description="Gerencie quem acessa o painel, com qual papel, e acompanhe o histórico de ações."
       />
 
       <Tabs defaultValue="usuarios" className="space-y-4">
-        <TabsList>
+        <TabsList data-tour="users-tabs">
           <TabsTrigger value="usuarios" className="gap-1.5">
             <Users2 className="h-4 w-4" />
             Usuários
@@ -72,7 +73,7 @@ const UsersPage = () => {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="usuarios">
+        <TabsContent value="usuarios" data-tour="users-list">
           <UsuariosTab isAdmin={isAdmin || authSetupPendente} meuId={perfil?.id ?? null} />
         </TabsContent>
 

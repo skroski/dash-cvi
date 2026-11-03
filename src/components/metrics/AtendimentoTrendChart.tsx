@@ -27,12 +27,14 @@ const AtendimentoTrendChart: React.FC<AtendimentoTrendChartProps> = ({
   error = null,
   onRetry,
 }) => {
-  const total = data.reduce((s, d) => s + d.abertos + d.finalizados, 0);
+  const total = data.reduce((s, d) => s + d.abertos + d.finalizados + d.fechadas, 0);
 
   return (
     <ChartCard
-      title="Atribuições ao Longo do Tempo"
-      description="Atendimentos abertos e encerrados pela equipe por período (ordem cronológica)"
+      title="Ciclo de Vida ao Longo do Tempo"
+      // As duas primeiras séries vêm de `atendimentos` (fluxo de atribuição); a
+      // terceira, de `conversas_status` — é a que soma o KPI "Fechados".
+      description="Atendimentos atribuídos e encerrados pela equipe, e conversas fechadas (ordem cronológica)"
       icon={<Activity />}
       loading={loading}
       error={error}
@@ -53,7 +55,7 @@ const AtendimentoTrendChart: React.FC<AtendimentoTrendChartProps> = ({
             <Line
               type="monotone"
               dataKey="abertos"
-              name="Abertos"
+              name="Atendimentos atribuídos"
               stroke="hsl(var(--chart-1))"
               strokeWidth={2}
               dot={false}
@@ -61,8 +63,16 @@ const AtendimentoTrendChart: React.FC<AtendimentoTrendChartProps> = ({
             <Line
               type="monotone"
               dataKey="finalizados"
-              name="Encerrados"
+              name="Atendimentos encerrados"
               stroke="hsl(var(--chart-2))"
+              strokeWidth={2}
+              dot={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="fechadas"
+              name="Conversas fechadas"
+              stroke="hsl(var(--chart-3))"
               strokeWidth={2}
               dot={false}
             />

@@ -55,6 +55,7 @@ import { Input } from '@/components/ui/input';
 import { useScheduledMessages } from '@/hooks/useScheduledMessages';
 import { cn } from '@/lib/utils';
 import { Conversation } from '@/types/chat';
+import FormattedMessage from './FormattedMessage';
 import {
   ScheduledMessage,
   ScheduledMessageInput,
@@ -462,12 +463,12 @@ const ScheduledMessagesDialog = ({
                                   {formatDateTime(scheduledMessage.scheduledFor)}
                                 </span>
                               </div>
-                              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-5">
-                                {scheduledMessage.message}
-                              </p>
+                              <div className="mt-2 text-sm leading-5">
+                                <FormattedMessage content={scheduledMessage.message} />
+                              </div>
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                                 <Send className="h-3.5 w-3.5" aria-hidden="true" />
-                                <span>Enviar como cvi</span>
+                                <span>Mensagem agendada</span>
                                 {scheduledMessage.error && (
                                   <span
                                     className="basis-full text-destructive"
@@ -542,7 +543,7 @@ const ScheduledMessagesDialog = ({
                     )}
                   </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
                     <div className="space-y-1.5">
                       <Label htmlFor="scheduled-message-date">Data e horário</Label>
                       <div className="relative">
@@ -581,29 +582,6 @@ const ScheduledMessagesDialog = ({
                           Horário de Brasília.
                         </p>
                       )}
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="scheduled-message-sender">Enviar como</Label>
-                      <Select
-                        value={sender}
-                        onValueChange={(value: ScheduledMessageSender) =>
-                          setSender(value)
-                        }
-                      >
-                        <SelectTrigger
-                          id="scheduled-message-sender"
-                          className="min-h-11"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="cvi">cvi</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        Selecione o número que fará o envio.
-                      </p>
                     </div>
                   </div>
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { format, isSameDay, parseISO } from 'date-fns';
+import { format, isValid } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { 
   Table, TableHeader, TableBody, TableRow, 
@@ -7,182 +7,203 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { 
-  Edit, Trash2, Clock, Mail, LinkIcon, LoaderCircle, 
-  Stethoscope, Calendar,
-  Syringe,
-  Microscope,
-  MapPinHouse
+  Clock, ExternalLink, LoaderCircle, 
+  Calendar as CalendarIcon, PawPrint, User, Phone, Eye
 } from 'lucide-react';
 import { CalendarEvent } from '@/types/calendar';
-import { AgendaType } from '@/hooks/useAgendaType';
 
 interface EventsTableProps {
   events: CalendarEvent[];
   isLoading: boolean;
-  onEditEvent: (event: CalendarEvent) => void;
-  onDeleteEvent: (event: CalendarEvent) => void;
+  onViewDetails: (event: CalendarEvent) => void;
   onOpenEventLink: (url: string) => void;
-  agendaType?: AgendaType;
+  selectedCalendarName?: string;
+  onSwitchToAll?: () => void;
+  onClearCalendarFilter?: () => void;
 }
 
 export function EventsTable({ 
   events, 
   isLoading, 
-  onEditEvent, 
-  onDeleteEvent, 
+  onViewDetails, 
   onOpenEventLink,
-  agendaType = 'consultaveterinaria'
+  selectedCalendarName,
+  onSwitchToAll,
+  onClearCalendarFilter
 }: EventsTableProps) {
   
-  const getStatusColor = (status: string, responseStatus?: string) => {
-    if (responseStatus) {
-      switch (responseStatus) {
-        case 'accepted':
-          return 'bg-success/10 text-success';
-        case 'tentative':
-          return 'bg-warning/10 text-warning';
-        case 'declined':
-          return 'bg-destructive/10 text-destructive';
-        case 'needsAction':
-          return 'bg-accent text-accent-foreground';
-        default:
-          return 'bg-muted text-muted-foreground';
-      }
-    }
-    
-    switch (status) {
-      case 'confirmed':
-        return 'bg-success/10 text-success';
-      case 'tentative':
-        return 'bg-warning/10 text-warning';
-      case 'cancelled':
-        return 'bg-destructive/10 text-destructive';
-      default:
-        return 'bg-muted text-muted-foreground';
-    }
-  };
-  
-  const getResponseStatusLabel = (responseStatus?: string) => {
-    switch (responseStatus) {
-      case 'accepted':
-        return 'Confirmado';
-      case 'tentative':
-        return 'Provisório';
-      case 'declined':
-        return 'Recusado';
-      case 'needsAction':
-        return 'Pendente';
-      default:
-        return 'Indefinido';
-    }
+  const getCalendarBadge = (calendarName?: string, calendarColor?: string) => {
+    return (
+      <span 
+        className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-md text-white shadow-2xs truncate max-w-[160px]"
+        style={{ backgroundColor: calendarColor || '#3b82f6' }}
+      >
+        <CalendarIcon className="h-3 w-3 shrink-0" />
+        <span className="truncate">{calendarName || 'Agenda'}</span>
+      </span>
+    );
   };
 
-  const getAgendaTypeIcon = () => {
-    switch (agendaType) {
-      case 'consultaveterinaria':
-        return <Stethoscope className="h-4 w-4 text-chart-4" />;
-      case 'vacinas':
-        return <Syringe className="h-4 w-4 text-chart-6" />;
-      case 'exame':
-        return <Microscope className="h-4 w-4 text-chart-2" />;
-      case 'hotel':
-        return <MapPinHouse className="h-4 w-4 text-chart-1" />;
-      default:
-        return <Calendar className="h-4 w-4 text-chart-5" />;
-    }
+  const parseSafeDate = (isoString?: string) => {
+    if (!isoString) return new Date();
+    const d = new Date(isoString);
+    return isValid(d) ? d : new Date();
   };
   
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto rounded-lg border bg-card">
       <Table>
         <TableHeader>
-          <TableRow>
-            <TableHead>Horário</TableHead>
-            <TableHead className="flex items-center gap-1">
-              {getAgendaTypeIcon()}
-              <span>Serviço</span>
-            </TableHead>
-            <TableHead>Participante</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Ações</TableHead>
+          <TableRow className="bg-muted/40 hover:bg-muted/40">
+            <TableHead className="w-[140px] font-semibold">Horário & Data</TableHead>
+            <TableHead className="w-[150px] font-semibold">Agenda do Google</TableHead>
+            <TableHead className="font-semibold">Procedimento / Título</TableHead>
+            <TableHead className="font-semibold">Paciente & Tutor</TableHead>
+            <TableHead className="text-right w-[110px] font-semibold">Ações</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {events.length > 0 ? events.map(event => {
-            const startDate = parseISO(event.start);
-            const endDate = parseISO(event.end);
-            const attendee = event.attendees?.find(a => a !== null);
-            
-            return (
-              <TableRow key={event.id}>
-                <TableCell>
-                  <div className="flex items-center gap-1">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    {format(startDate, 'HH:mm')}
-                    {!isSameDay(startDate, endDate) && ' - evento de múltiplos dias'}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {format(startDate, "dd/MM/yyyy")}
-                  </div>
-                </TableCell>
-                <TableCell className="font-medium">{event.summary}</TableCell>
-                <TableCell>
-                  {attendee?.email ? (
-                    <div className="flex items-center gap-1">
-                      <Mail className="h-4 w-4 text-muted-foreground" />
-                      {attendee.email}
+          {events.length > 0 ? (
+            events.map((event) => {
+              const startDate = parseSafeDate(event.start);
+              const endDate = parseSafeDate(event.end);
+              const attendee = event.attendees?.find(a => a !== null);
+              
+              return (
+                <TableRow 
+                  key={event.id} 
+                  className="hover:bg-muted/40 transition-colors cursor-pointer group"
+                  onClick={() => onViewDetails(event)}
+                >
+                  {/* Horário e Data */}
+                  <TableCell className="align-top py-3">
+                    <div className="flex items-center gap-1.5 font-semibold text-sm text-foreground">
+                      <Clock className="h-3.5 w-3.5 text-primary shrink-0" />
+                      <span>{format(startDate, 'HH:mm')}</span>
+                      <span className="text-xs text-muted-foreground font-normal">
+                        - {format(endDate, 'HH:mm')}
+                      </span>
                     </div>
-                  ) : (
-                    <span className="text-muted-foreground">Sem participante</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(event.status, attendee?.responseStatus)}`}>
-                    {getResponseStatusLabel(attendee?.responseStatus)}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <div className="flex space-x-2">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      onClick={() => onEditEvent(event)} 
-                      title="Editar evento"
-                      className="text-primary hover:bg-accent hover:text-primary"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      onClick={() => onDeleteEvent(event)} 
-                      title="Excluir evento"
-                      className="text-red-600 hover:text-red-800 hover:bg-red-100 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/30"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      onClick={() => onOpenEventLink(event.htmlLink)} 
-                      title="Abrir no Google Calendar"
-                    >
-                      <LinkIcon className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            );
-          }) : (
+                    <div className="text-xs text-muted-foreground mt-0.5 capitalize">
+                      {format(startDate, "EEE, dd/MM", { locale: pt })}
+                    </div>
+                  </TableCell>
+
+                  {/* Agenda de Origem no Google */}
+                  <TableCell className="align-top py-3">
+                    {getCalendarBadge(event.calendarName, event.calendarColor)}
+                  </TableCell>
+
+                  {/* Resumo do Atendimento */}
+                  <TableCell className="align-top py-3">
+                    <div className="font-medium text-sm text-foreground group-hover:text-primary transition-colors">
+                      {event.summary}
+                    </div>
+                    {event.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5 whitespace-pre-line">
+                        {event.description}
+                      </p>
+                    )}
+                  </TableCell>
+
+                  {/* Paciente e Tutor */}
+                  <TableCell className="align-top py-3">
+                    <div className="space-y-1 text-xs">
+                      {event.petName ? (
+                        <div className="flex items-center gap-1.5 font-medium text-foreground">
+                          <PawPrint className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                          <span>{event.petName}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <PawPrint className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <span className="italic">Paciente a confirmar</span>
+                        </div>
+                      )}
+
+                      {event.ownerName ? (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <User className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate max-w-[150px]">{event.ownerName}</span>
+                        </div>
+                      ) : attendee?.email ? (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <User className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate max-w-[150px]">{attendee.email}</span>
+                        </div>
+                      ) : null}
+
+                      {event.phone && (
+                        <div className="flex items-center gap-1.5 text-muted-foreground font-mono text-[11px]">
+                          <Phone className="h-3 w-3 shrink-0" />
+                          <span>{event.phone}</span>
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+
+                  {/* Ações */}
+                  <TableCell className="align-top py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-8 px-2 text-xs gap-1 text-primary hover:bg-primary/10"
+                        onClick={() => onViewDetails(event)} 
+                        title="Ver detalhes do agendamento"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Ver</span>
+                      </Button>
+
+                      {event.htmlLink && (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => onOpenEventLink(event.htmlLink!)} 
+                          title="Abrir no Google Agenda"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })
+          ) : (
             <TableRow>
-              <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+              <TableCell colSpan={5} className="text-center py-10 text-muted-foreground">
                 {isLoading ? (
-                  <div className="flex justify-center items-center gap-2">
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                    <span>Carregando eventos...</span>
+                  <div className="flex flex-col justify-center items-center gap-2 py-4">
+                    <LoaderCircle className="h-5 w-5 animate-spin text-primary" />
+                    <span className="text-sm font-medium">Carregando dados da API do Google...</span>
                   </div>
                 ) : (
-                  "Nenhum evento encontrado para esta data ou pesquisa."
+                  <div className="py-4 space-y-2 flex flex-col items-center">
+                    <p className="font-semibold text-foreground">
+                      {selectedCalendarName 
+                        ? `Nenhum agendamento para ${selectedCalendarName}` 
+                        : 'Nenhum agendamento encontrado'}
+                    </p>
+                    <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                      Alterne a agenda ou a data selecionada para visualizar os dados.
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+                      {onSwitchToAll && (
+                        <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={onSwitchToAll}>
+                          <CalendarIcon className="h-3 w-3 text-primary" />
+                          Ver em Todas as Datas
+                        </Button>
+                      )}
+                      {onClearCalendarFilter && (
+                        <Button variant="secondary" size="sm" className="h-7 text-xs gap-1.5" onClick={onClearCalendarFilter}>
+                          Ver Todas as Agendas
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 )}
               </TableCell>
             </TableRow>

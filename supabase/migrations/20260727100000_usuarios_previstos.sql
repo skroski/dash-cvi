@@ -32,8 +32,6 @@ comment on table public.usuarios_previstos is
 
 insert into public.usuarios_previstos (email, papel, observacao) values
   ('recepcaohovetcvi@gmail.com',   'atendente', 'Recepção — nível operacional'),
-  ('centroeducativocvi@gmail.com', 'lider',     'Creche e Hotel — liderança'),
-  ('cvibanhoetosa@gmail.com',      'lider',     'Banho e Tosa — liderança'),
   ('adminclinicacvi@gmail.com',    'admin',     'Administração da clínica'),
   ('danielskroski@gmail.com',       'admin',     'Administrador do sistema')
 on conflict (email) do update

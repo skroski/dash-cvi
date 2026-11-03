@@ -2,9 +2,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Session, User, AuthError, Provider } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { ENV_DEFAULTS } from '@/config/env';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { usePerfil } from '@/hooks/usePerfil';
+import { useActivityHeartbeat } from '@/hooks/useActivityHeartbeat';
 import { Papel, Perfil } from '@/types/perfil';
 
 type AuthContextType = {
@@ -101,15 +103,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const { perfil, loading: perfilLoading, setupPendente } = usePerfil(user?.id ?? null);
 
+  // Tempo de atividade (aba visível e em primeiro plano) — ativo em todo o
+  // painel enquanto houver sessão, não só na tela de Métricas.
+  useActivityHeartbeat(!!user && perfil?.papel !== 'totem');
+
+  const isVeterinario =
+    (!!ENV_DEFAULTS.EMAIL_GRUPO_VETERINARIOS && user?.email?.toLowerCase() === ENV_DEFAULTS.EMAIL_GRUPO_VETERINARIOS) ||
+    perfil?.papel === 'veterinario';
+  const papel: Papel | null = isVeterinario ? 'veterinario' : (perfil?.papel ?? null);
+
   const value = {
     session,
     user,
     isLoading: isLoading || perfilLoading,
-    perfil,
-    papel: perfil?.papel ?? null,
-    isAdmin: perfil?.papel === 'admin',
-    isGestor: perfil?.papel === 'admin' || perfil?.papel === 'lider',
-    setupPendente,
+    perfil: isVeterinario && perfil ? { ...perfil, papel: 'veterinario' as Papel } : perfil,
+    papel,
+    isAdmin: papel === 'admin',
+    isGestor: papel === 'admin' || papel === 'lider',
+    setupPendente: isVeterinario ? false : setupPendente,
     signIn,
     signOut,
     signInWithSocial,

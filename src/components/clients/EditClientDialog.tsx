@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Contact } from '@/types/client';
 
 interface EditClientDialogProps {
@@ -151,6 +152,27 @@ const EditClientDialog = ({
                   <SelectItem value="grande">Grande</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="edit-status" className="text-right">
+                Status
+              </Label>
+              <div className="col-span-3 flex items-center gap-2">
+                <Switch
+                  id="edit-status"
+                  checked={editContactData.status !== 'Inactive'}
+                  onCheckedChange={(checked) =>
+                    setEditContactData({
+                      ...editContactData,
+                      status: checked ? 'Active' : 'Inactive',
+                    })
+                  }
+                  className="data-[state=checked]:bg-emerald-600"
+                />
+                <span className="text-xs font-medium">
+                  {editContactData.status !== 'Inactive' ? 'Ativo (true)' : 'Inativo (false)'}
+                </span>
+              </div>
             </div>
           </div>
           <div className="grid grid-cols-4 items-start gap-4">

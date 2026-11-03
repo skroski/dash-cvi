@@ -9,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { getWebhookUrl } from '@/config/env';
 import { Conversation } from '@/types/chat';
 import GroupInfoPanel from './GroupInfoPanel';
 import PendenciasSection from '@/components/pendencias/PendenciasSection';
@@ -43,7 +42,7 @@ const ClientInfoPanel = ({ selectedChat, selectedConversation, onConversationUpd
     }
   }, [selectedConversation]);
 
-  const handleSavePet = async () => {
+  const handleCVI = async () => {
     if (!selectedConversation) return;
 
     try {
@@ -67,29 +66,6 @@ const ClientInfoPanel = ({ selectedChat, selectedConversation, onConversationUpd
           petType: petType || 'Não informado',
           petBreed: petBreed || 'Não informado',
         });
-      }
-
-      // Sync webhook
-      try {
-        await fetch(getWebhookUrl('edita_usuario', '/edita_usuario'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            id: selectedConversation.clientData?.id,
-            name: selectedConversation.clientData?.nome || selectedConversation.name,
-            email: selectedConversation.clientData?.email || selectedConversation.email,
-            phone: selectedConversation.clientData?.telefone || selectedConversation.phone,
-            petName: petName || '',
-            petSize: petType || '',
-            petBreed: petBreed || '',
-            cpfCnpj: selectedConversation.clientData?.cpf_cnpj || '',
-            asaasCustomerId: selectedConversation.clientData?.asaas_customer_id || '',
-          }),
-        });
-      } catch (webhookError) {
-        console.error('Erro ao enviar para webhook:', webhookError);
       }
 
       toast.success("Pet atualizado", { description: "As informações do pet foram atualizadas com sucesso." });
@@ -185,7 +161,7 @@ const ClientInfoPanel = ({ selectedChat, selectedConversation, onConversationUpd
               <div className="flex justify-end mb-2">
                 {isEditingPet ? (
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={handleSavePet} className="gap-1">
+                    <Button size="sm" onClick={handleCVI} className="gap-1">
                       <Save className="h-4 w-4" />
                       Salvar
                     </Button>

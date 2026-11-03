@@ -6,8 +6,8 @@
  * componentes através de useNotificationSettings (useSyncExternalStore).
  */
 
-const STORAGE_KEY = 'vetbots-notification-settings';
-const SETTINGS_EVENT = 'vetbots:notification-settings';
+const STORAGE_KEY = 'cvi-notification-settings';
+const SETTINGS_EVENT = 'cvi:notification-settings';
 
 export interface NotificationSettings {
   /** Sinal sonoro ao receber novas mensagens/notificações. */

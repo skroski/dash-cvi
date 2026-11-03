@@ -22,7 +22,8 @@ const AppSidebar = () => {
 
   // Os itens vêm do registro de módulos, a mesma fonte que o ModuloGuard usa —
   // é o que garante que nada fique escondido no menu mas acessível pela URL.
-  const papelAtual = papelEfetivo(papel, setupPendente);
+  const papelAtual = papelEfetivo(papel, setupPendente, user?.email);
+  const isVet = papelAtual === 'veterinario';
   const mainNav = modulosDoGrupo('menu', papelAtual);
   const systemNav = modulosDoGrupo('sistema', papelAtual);
   const gestaoNav = modulosDoGrupo('gestao', papelAtual);
@@ -30,15 +31,17 @@ const AppSidebar = () => {
   const userEmail = user?.email ?? '';
   const userName =
     (user?.user_metadata?.name as string | undefined) ??
-    userEmail.split('@')[0] ??
+    (isVet ? 'Veterinários' : userEmail.split('@')[0]) ??
     'Usuário';
-  const initials = userName
-    .split(/\s+/)
-    .map((part) => part[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+  const initials = isVet
+    ? 'VT'
+    : userName
+        .split(/\s+/)
+        .map((part) => part[0])
+        .filter(Boolean)
+        .slice(0, 2)
+        .join('')
+        .toUpperCase();
 
   const renderItems = (items: Modulo[]) =>
     items.map((item) => (
@@ -48,7 +51,9 @@ const AppSidebar = () => {
           isActive={location.pathname === item.url}
           tooltip={item.title}
         >
-          <NavLink to={item.url}>
+          {/* `data-tour` é a âncora estável do tour guiado; o Slot do Radix
+              repassa para o <a> renderizado. Não afeta estilo nem navegação. */}
+          <NavLink to={item.url} data-tour={`nav:${item.url}`}>
             <item.icon aria-hidden="true" />
             <span>{item.title}</span>
           </NavLink>
@@ -59,19 +64,23 @@ const AppSidebar = () => {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex items-center gap-1 px-1 py-1">
+        <div className="flex items-center gap-1 px-1 py-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           <img
             src="/assets/images/logo-light.png"
-            alt="VetBots"
-            className="h-12  shrink-0 rounded-md object-contain"
+            alt="C.V.I. - Centro Veterinário Integrado"
+            className="h-12 shrink-0 rounded-md object-contain group-data-[collapsible=icon]:hidden"
           />
-          
+          <img
+            src="/assets/images/logo-icon.png"
+            alt="C.V.I. - Centro Veterinário Integrado"
+            className="hidden h-9 w-9 shrink-0 object-contain group-data-[collapsible=icon]:block"
+          />
         </div>
       </SidebarHeader>
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Menu</SidebarGroupLabel>
+          <SidebarGroupLabel>{isVet ? 'Painel Veterinário' : 'Menu'}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(mainNav)}</SidebarMenu>
           </SidebarGroupContent>

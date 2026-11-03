@@ -1,204 +1,302 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { getWebhookUrl } from '@/config/env';
 import { supabase } from '@/integrations/supabase/client';
+import type { Document, DocumentChunk, RagTestResult, KnowledgeStats } from '@/types/knowledge';
 
-// Document type definition
-export interface Document {
-  id: number;
-  name: string;
-  type: string;
-  size: string;
-  uploadedAt: string;
-  category: string;
-  titulo?: string | null;
-  metadata?: Record<string, any> | null;
+export type { Document } from '@/types/knowledge';
+
+function calcularStatsLocais(docs: Document[]): KnowledgeStats {
+  const origens: Record<string, number> = {};
+  const categorias: Record<string, number> = {};
+  let totalChunks = 0;
+  let totalCaracteres = 0;
+
+  for (const doc of docs) {
+    totalChunks += doc.partes || 1;
+    totalCaracteres += doc.totalCaracteres || 0;
+    const o = doc.origem || 'upload';
+    origens[o] = (origens[o] || 0) + 1;
+    const c = doc.category || 'Geral';
+    categorias[c] = (categorias[c] || 0) + 1;
+  }
+
+  return {
+    total_documentos: docs.length,
+    total_chunks: totalChunks,
+    total_caracteres: totalCaracteres,
+    origens,
+    categorias,
+  };
 }
 
 export const useDocuments = () => {
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [stats, setStats] = useState<KnowledgeStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isImportingDrive, setIsImportingDrive] = useState(false);
+  const [isTestingRag, setIsTestingRag] = useState(false);
 
-  // Safe way to extract values from metadata
-  const getMetadataValue = (metadata: any, key: string, defaultValue: string): string => {
-    if (typeof metadata === 'object' && metadata !== null && key in metadata) {
-      return String(metadata[key]) || defaultValue;
-    }
-    return defaultValue;
-  };
+  // Calcula e atualiza estatísticas da base RAG a partir dos documentos carregados
+  const fetchStats = useCallback(async (currentDocs?: Document[]) => {
+    const targetDocs = currentDocs ?? documents;
+    setStats(calcularStatsLocais(targetDocs));
+  }, [documents]);
 
-  // Fetch documents from Supabase
-  const fetchDocuments = async () => {
+  // Busca listagem consolidada de documentos indexados no PGVector
+  const fetchDocuments = useCallback(async (silencioso = false) => {
     try {
-      setIsLoading(true);
-      // Only select titulo column
-      const { data, error } = await supabase
-        .from('documents')
-        .select('titulo');
+      if (!silencioso) setIsLoading(true);
+      const { data, error } = await supabase.functions.invoke('conhecimento', {
+        body: { action: 'listar' },
+      });
 
-      if (error) {
-        console.error('Error fetching documents:', error);
-        toast.error("Erro ao carregar documentos", { description: error.message });
+      if (error || data?.error) {
+        const detail = error?.message || String(data?.error || 'Erro desconhecido');
+        console.error('Error fetching documents:', detail);
+        if (!silencioso) {
+          toast.error("Erro ao carregar documentos", { description: detail });
+        }
         return;
       }
 
-      // Transform the data to match our Document interface
-      const formattedDocs: Document[] = data.map((doc, index) => {
-        // Use titulo from the database if available, otherwise generate a name
-        const documentName = doc.titulo || `Documento ${index + 1}`;
+      const formattedDocs: Document[] = (data?.documents || []).map((doc: {
+        id: number;
+        titulo: string;
+        categoria?: string;
+        origem?: string;
+        drive_id?: string | null;
+        partes?: number;
+        total_caracteres?: number;
+        criado_em?: string;
+        atualizado_em?: string;
+      }) => {
+        const partesCount = Number(doc.partes || 1);
+        const dataUpload = doc.atualizado_em || doc.criado_em;
+        const dataFormatada = dataUpload ? new Date(dataUpload).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR');
 
-        // Create dummy data for other required fields since we don't have metadata
         return {
-          id: index + 1, // Generate dummy id
-          name: documentName,
-          type: 'unknown',
-          size: 'Unknown',
-          category: 'Sem categoria',
-          uploadedAt: new Date().toISOString().split('T')[0],
+          id: doc.id,
+          name: doc.titulo,
           titulo: doc.titulo,
+          type: doc.origem === 'google_drive' ? 'Google Drive' : 'Arquivo Local',
+          size: doc.total_caracteres ? `${Math.round(doc.total_caracteres / 1024 * 10) / 10} KB` : `${partesCount} chunks`,
+          category: doc.categoria || 'Geral',
+          origem: doc.origem || 'upload',
+          driveId: doc.drive_id,
+          partes: partesCount,
+          totalCaracteres: doc.total_caracteres,
+          uploadedAt: dataFormatada,
         };
       });
 
-      // Filter out duplicates based on the titulo field
-      const uniqueDocs = filterUniqueByTitle(formattedDocs);
-
-      setDocuments(uniqueDocs);
+      setDocuments(formattedDocs);
+      await fetchStats(formattedDocs);
     } catch (err) {
       console.error('Unexpected error fetching documents:', err);
-      toast.error("Erro inesperado", { description: "Não foi possível carregar os documentos." });
+      if (!silencioso) {
+        toast.error("Erro inesperado", { description: "Não foi possível carregar os documentos." });
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, [fetchStats]);
 
-  // Filter documents to keep only unique titulo entries
-  const filterUniqueByTitle = (docs: Document[]): Document[] => {
-    const uniqueTitles = new Set<string>();
-    return docs.filter(doc => {
-      const title = doc.titulo || doc.name;
-      if (uniqueTitles.has(title)) {
-        return false;
-      }
-      uniqueTitles.add(title);
-      return true;
-    });
-  };
-
-  // Handle refresh
-  const handleRefresh = () => {
+  // Recarrega lista e métricas
+  const handleRefresh = useCallback(() => {
     setIsRefreshing(true);
     fetchDocuments();
-    toast.success("Atualizando documentos", { description: "Os documentos estão sendo atualizados do banco de dados." });
-  };
+    toast.success("Atualizando base de conhecimento", {
+      description: "Consultando índices e documentos do PGVector...",
+    });
+  }, [fetchDocuments]);
 
-  // Delete document - Updated to call the webhook with the title
-  const handleDeleteDocument = async (id: number, title: string) => {
+  // Exclui todas as partes de um documento (por título ou driveId)
+  const handleDeleteDocument = useCallback(async (id: number, title: string, driveId?: string | null) => {
     try {
-      // Call webhook to delete file from RAG system
-      console.log('Enviando solicitação para excluir arquivo:', title);
-
-      const response = await fetch(getWebhookUrl('excluirArquivoRag', '/excluir-arquivo-rag'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          titulo: title
-        }),
+      const { data, error } = await supabase.functions.invoke('conhecimento', {
+        body: { action: 'excluir', titulo: title, drive_id: driveId },
       });
+      if (error || data?.error) throw new Error(error?.message || String(data?.error));
 
-      if (!response.ok) {
-        throw new Error(`Erro ao excluir o arquivo: ${response.statusText}`);
-      }
-
-      // Only remove from UI if webhook call was successful
-      setDocuments(documents.filter(doc => doc.id !== id));
-
-      toast.error("Documento excluído", { description: "O documento foi removido com sucesso!" });
+      setDocuments((current) => {
+        const next = current.filter((doc) => doc.id !== id && doc.name !== title);
+        fetchStats(next);
+        return next;
+      });
+      toast.success("Documento excluído", { description: `"${title}" foi removido da base vetorial.` });
     } catch (err) {
       console.error('Unexpected error deleting document:', err);
-      toast.error("Erro inesperado", { description: "Não foi possível excluir o documento." });
+      toast.error("Erro ao excluir documento", { description: "Não foi possível remover o documento do banco." });
     }
-  };
+  }, [fetchStats]);
 
-  // New function to clear all documents
-  const clearAllDocuments = async () => {
+  // Limpa completamente a base RAG
+  const clearAllDocuments = useCallback(async () => {
     try {
-      console.log('Enviando solicitação para excluir toda a base de conhecimento');
-
-      const response = await fetch(getWebhookUrl('excluirRag', '/excluir-rag'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({}),
+      const { data, error } = await supabase.functions.invoke('conhecimento', {
+        body: { action: 'limpar' },
       });
+      if (error || data?.error) throw new Error(error?.message || String(data?.error));
 
-      if (!response.ok) {
-        throw new Error(`Erro ao limpar a base de conhecimento: ${response.statusText}`);
-      }
-
-      // Clear the documents array
       setDocuments([]);
-
-      toast.error("Base de conhecimento limpa", { description: "Todos os documentos foram removidos com sucesso!" });
+      setStats(null);
+      toast.success("Base de conhecimento limpa", { description: "Todos os vetores foram removidos." });
     } catch (err) {
       console.error('Unexpected error clearing knowledge base:', err);
-      toast.error("Erro inesperado", { description: "Não foi possível limpar a base de conhecimento." });
+      toast.error("Erro ao limpar base", { description: "Não foi possível limpar os documentos." });
     }
-  };
+  }, []);
 
-  // Upload file to webhook
-  const uploadFileToWebhook = async (file: File, category: string) => {
+  // Upload direto de arquivo pelo navegador
+  const uploadFileToWebhook = useCallback(async (file: File, category: string): Promise<boolean> => {
+    setIsUploading(true);
     try {
       const formData = new FormData();
+      formData.append('action', 'enviar');
       formData.append('file', file);
       formData.append('category', category);
 
-      console.log('Enviando arquivo para o webhook:', file.name, 'categoria:', category);
-
-      const response = await fetch(getWebhookUrl('enviaRag', '/envia_rag'), {
-        method: 'POST',
+      const { data, error } = await supabase.functions.invoke('conhecimento', {
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error(`Erro ao enviar o arquivo: ${response.statusText}`);
+      if (error || data?.error) {
+        throw new Error(error?.message || String(data?.error || 'Erro no envio'));
       }
 
-      const result = await response.json();
-      console.log('Arquivo enviado com sucesso:', result);
-
-      // After successful upload, refresh the document list
-      await fetchDocuments();
-
-      toast.success("Documento adicionado", { description: `${file.name} foi adicionado com sucesso!` });
-
+      await fetchDocuments(true);
+      toast.success("Documento indexado com sucesso!", {
+        description: `"${file.name}" foi dividido em ${data?.partes || 1} fragmentos com PGVector.`,
+      });
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao enviar o arquivo:', error);
-
-      toast.error("Erro ao enviar documento", { description: "Não foi possível enviar o documento para o sistema de conhecimento." });
-
+      toast.error("Erro ao processar arquivo", {
+        description: error?.message || "Não foi possível extrair e indexar o arquivo.",
+      });
       return false;
+    } finally {
+      setIsUploading(false);
     }
-  };
+  }, [fetchDocuments]);
 
-  // Load documents on hook initialization
+  // Importação e indexação de arquivo do Google Drive
+  const importGoogleDrive = useCallback(async (
+    urlOuId: string,
+    category: string,
+    tokenUsuario?: string
+  ): Promise<boolean> => {
+    setIsImportingDrive(true);
+    try {
+      // Tenta usar o token salvo da Google Agenda/OAuth se não fornecido
+      const storedToken = tokenUsuario || localStorage.getItem('cvi_google_access_token') || undefined;
+
+      const { data, error } = await supabase.functions.invoke('conhecimento', {
+        body: {
+          action: 'importar_drive',
+          file_id_or_url: urlOuId,
+          categoria: category,
+          google_token: storedToken,
+        },
+      });
+
+      if (error || data?.error) {
+        throw new Error(error?.message || String(data?.error || 'Erro ao importar do Google Drive'));
+      }
+
+      await fetchDocuments(true);
+      toast.success("Arquivo do Google Drive indexado!", {
+        description: `"${data?.titulo}" foi lido e dividido em ${data?.partes || 1} vetores no PGVector.`,
+      });
+      return true;
+    } catch (error: any) {
+      console.error('Erro ao importar do Google Drive:', error);
+      toast.error("Erro ao importar do Google Drive", {
+        description: error?.message || "Verifique o link do arquivo ou as permissões de compartilhamento.",
+      });
+      return false;
+    } finally {
+      setIsImportingDrive(false);
+    }
+  }, [fetchDocuments]);
+
+  // Testar busca semântica e respostas RAG
+  const testRag = useCallback(async (
+    pergunta: string,
+    matchCount = 5,
+    similarityThreshold = 0.25
+  ): Promise<RagTestResult | null> => {
+    setIsTestingRag(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('conhecimento', {
+        body: {
+          action: 'testar_rag',
+          pergunta,
+          match_count: matchCount,
+          similarity_threshold: similarityThreshold,
+        },
+      });
+
+      if (error || data?.error) {
+        throw new Error(error?.message || String(data?.error || 'Erro ao testar RAG'));
+      }
+
+      return data as RagTestResult;
+    } catch (error: any) {
+      console.error('Erro ao testar busca RAG:', error);
+      toast.error("Erro na consulta de teste", {
+        description: error?.message || "Não foi possível testar a busca vetorial.",
+      });
+      return null;
+    } finally {
+      setIsTestingRag(false);
+    }
+  }, []);
+
+  // Busca os chunks detalhados de um documento para visualização
+  const fetchDocumentChunks = useCallback(async (titulo: string): Promise<DocumentChunk[]> => {
+    try {
+      const { data, error } = await supabase.functions.invoke('conhecimento', {
+        body: { action: 'listar_chunks', titulo },
+      });
+
+      if (error || data?.error) {
+        throw new Error(error?.message || String(data?.error));
+      }
+
+      return (data?.chunks || []) as DocumentChunk[];
+    } catch (err: any) {
+      console.error('Erro ao listar chunks:', err);
+      toast.error("Erro ao carregar fragmentos", {
+        description: err?.message || "Não foi possível obter os chunks deste documento.",
+      });
+      return [];
+    }
+  }, []);
+
   useEffect(() => {
     fetchDocuments();
-  }, []);
+  }, [fetchDocuments]);
 
   return {
     documents,
+    stats,
     isLoading,
     isRefreshing,
+    isUploading,
+    isImportingDrive,
+    isTestingRag,
     fetchDocuments,
+    fetchStats,
     handleRefresh,
     handleDeleteDocument,
     uploadFileToWebhook,
-    clearAllDocuments
+    importGoogleDrive,
+    testRag,
+    fetchDocumentChunks,
+    clearAllDocuments,
   };
 };

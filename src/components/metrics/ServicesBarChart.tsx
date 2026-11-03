@@ -13,7 +13,8 @@ import ChartCard from '@/components/shared/ChartCard';
 import { CHART_GRID_COLOR, CHART_TICK, CHART_TOOLTIP_STYLE } from '@/lib/chartColors';
 
 interface Service {
-  name: string;
+  servico: string;
+  name?: string;
   value: number;
 }
 
@@ -51,16 +52,16 @@ const ServicesBarChart: React.FC<ServicesBarChartProps> = ({
             <XAxis type="number" tick={CHART_TICK} tickLine={false} axisLine={false} allowDecimals={false} />
             <YAxis
               type="category"
-              dataKey="name"
+              dataKey="servico"
               tick={CHART_TICK}
               tickLine={false}
               axisLine={false}
-              width={110}
+              width={130}
             />
             <Tooltip
               contentStyle={CHART_TOOLTIP_STYLE}
               cursor={{ fill: 'hsl(var(--muted))' }}
-              formatter={(value: number) => [value, 'Clientes']}
+              formatter={(value: number) => [value, 'Ocorrências']}
             />
             <Bar
               dataKey="value"

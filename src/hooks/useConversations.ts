@@ -5,6 +5,7 @@ import type { Database } from '@/integrations/supabase/types';
 import { Conversation, N8nChatHistory } from '@/types/chat';
 import { formatMessageTime } from '@/utils/chatUtils';
 import { getActiveChat } from '@/lib/activeChat';
+import { rotuloPreviaMidia } from '@/lib/media';
 
 type MessageRecord = Record<string, unknown>;
 
@@ -47,7 +48,28 @@ function getMessageType(message: unknown): 'human' | 'ai' | 'unknown' {
 type SearchConversationRow =
   Database['public']['Functions']['search_conversations']['Returns'][number];
 
-const ITEMS_PER_PAGE = 100;
+let painelFunctionDisponivel = true;
+
+type AtendimentoConversationRow = {
+  session_id: string;
+  nome_contato: string | null;
+  ultima_mensagem_em: string | null;
+  direcao: string | null;
+  conteudo: string | null;
+  tipo: string | null;
+  ocorrido_em: string | null;
+  cliente_id: number | null;
+  cliente_nome: string | null;
+  cliente_email: string | null;
+  cliente_telefone: string | null;
+  nome_pet: string | null;
+  porte_pet: string | null;
+  raca_pet: string | null;
+  servico: string | null;
+  total_count: number | string;
+};
+
+export const CONVERSATIONS_PAGE_SIZE = 200;
 const SEARCH_DEBOUNCE_MS = 300;
 
 function getMessageDetails(message: unknown) {
@@ -67,11 +89,13 @@ function getMessageDetails(message: unknown) {
     if (content) {
       lastMessage = content;
     } else if (mediaUrl) {
-      lastMessage = messageType === 'image'
-        ? '📷 Imagem'
-        : messageType === 'audio'
-          ? '🎵 Áudio'
-          : '📄 Documento';
+      // Pelo tipo real (nome do arquivo/URL contam), não só pelo campo `type`:
+      // uma foto gravada com type 'human' virava "📄 Documento" na lista.
+      lastMessage = rotuloPreviaMidia({
+        type: messageType,
+        mediaUrl,
+        fileName: getStringField(parsedMessage, 'fileName'),
+      });
     } else if (Array.isArray(messages)) {
       const lastRecord = parseMessageRecord(messages.at(-1));
       lastMessage = lastRecord ? getStringField(lastRecord, 'content') || 'Sem mensagem' : 'Sem mensagem';
@@ -135,96 +159,43 @@ function toConversation(row: SearchConversationRow): Conversation {
   };
 }
 
-async function fetchConversationsFallback(
-  searchTerm: string,
-  page: number,
-  limit: number
-): Promise<{ rows: SearchConversationRow[]; total: number }> {
-  let matchedSessionIdsFromClients: string[] = [];
-
-  if (searchTerm) {
-    const { data: matchedClients } = await supabase
-      .from('dados_cliente')
-      .select('sessionid')
-      .or(`nome.ilike.%${searchTerm}%,telefone.ilike.%${searchTerm}%,nome_pet.ilike.%${searchTerm}%`)
-      .limit(100);
-
-    if (matchedClients) {
-      matchedSessionIdsFromClients = matchedClients
-        .map(c => c.sessionid)
-        .filter((id): id is string => Boolean(id));
-    }
-  }
-
-  let query = supabase
-    .from('n8n_chat_histories')
-    .select('session_id, id, message, data')
-    .order('id', { ascending: false });
-
-  if (searchTerm) {
-    if (matchedSessionIdsFromClients.length > 0) {
-      query = query.or(
-        `session_id.ilike.%${searchTerm}%,session_id.in.(${matchedSessionIdsFromClients.join(',')})`
-      );
-    } else {
-      query = query.ilike('session_id', `%${searchTerm}%`);
-    }
-  }
-
-  const { data: historyData, error: historyError } = await query.limit(500);
-  if (historyError) throw historyError;
-
-  const latestBySession = new Map<string, (typeof historyData)[number]>();
-  for (const item of historyData || []) {
-    if (item.session_id && !latestBySession.has(item.session_id)) {
-      latestBySession.set(item.session_id, item);
-    }
-  }
-
-  const sessions = Array.from(latestBySession.values());
-  const sessionIds = sessions.map(s => s.session_id);
-
-  const clientsMap = new Map<string, Record<string, unknown>>();
-  if (sessionIds.length > 0) {
-    const { data: clientsData } = await supabase
-      .from('dados_cliente')
-      .select('*')
-      .in('sessionid', sessionIds);
-
-    if (clientsData) {
-      for (const client of clientsData) {
-        if (client.sessionid && !clientsMap.has(client.sessionid)) {
-          clientsMap.set(client.sessionid, client as Record<string, unknown>);
+function toAtendimentoConversation(row: AtendimentoConversationRow): Conversation {
+  const isGroup = row.session_id.includes('@g.us');
+  const date = new Date(row.ocorrido_em || row.ultima_mensagem_em || Date.now());
+  const lastMessageDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  const hasClient = row.cliente_id !== null;
+  const lastMessage = row.conteudo?.trim()
+    || (row.tipo && row.tipo !== 'texto' ? 'Mídia recebida' : 'Sem mensagem');
+  return {
+    id: row.session_id,
+    name: isGroup
+      ? row.nome_contato || `Grupo WhatsApp (${row.session_id.split('@')[0]})`
+      : row.cliente_nome || row.nome_contato || `Contato (${row.session_id.split('@')[0]})`,
+    lastMessage,
+    time: formatMessageTime(lastMessageDate),
+    unread: 0,
+    avatar: '',
+    phone: row.cliente_telefone || row.session_id.split('@')[0],
+    email: row.cliente_email || (hasClient ? 'Sem email' : ''),
+    petName: row.nome_pet || (hasClient ? 'Não informado' : undefined),
+    petType: row.porte_pet || (hasClient ? 'Não informado' : undefined),
+    petBreed: row.raca_pet || (hasClient ? 'Não informado' : undefined),
+    sessionId: row.session_id,
+    lastMessageDate,
+    lastMessageSender: row.direcao === 'entrada' ? 'human' : row.direcao ? 'ai' : 'unknown',
+    isGroup,
+    clientData: hasClient
+      ? {
+          id: row.cliente_id as number,
+          nome: row.cliente_nome || 'Cliente sem nome',
+          email: row.cliente_email || 'Sem email',
+          telefone: row.cliente_telefone || '',
+          cpf_cnpj: '',
+          servico: row.servico || '',
+          asaas_customer_id: '',
         }
-      }
-    }
-  }
-
-  const offset = page * limit;
-  const pagedSessions = sessions.slice(offset, offset + limit);
-
-  const rows: SearchConversationRow[] = pagedSessions.map(s => {
-    const client = clientsMap.get(s.session_id);
-    return {
-      session_id: s.session_id,
-      latest_id: Number(s.id),
-      message: s.message as SearchConversationRow['message'],
-      message_date: s.data,
-      client_id: client?.id ? Number(client.id) : null,
-      client_name: (client?.nome as string) ?? null,
-      client_phone: (client?.telefone as string) ?? null,
-      client_email: (client?.email as string) ?? null,
-      pet_name: (client?.nome_pet as string) ?? null,
-      pet_size: (client?.porte_pet as string) ?? null,
-      pet_breed: (client?.raca_pet as string) ?? null,
-      cpf_cnpj: (client?.cpf_cnpj as string) ?? null,
-      service: (client?.servico as string) ?? null,
-      asaas_customer_id: (client?.asaas_customer_id as string) ?? null,
-      total_count: sessions.length,
-    };
-  });
-
-  return { rows, total: sessions.length };
+      : undefined,
+  };
 }
 
 export function useConversations(searchTerm = '') {
@@ -243,7 +214,7 @@ export function useConversations(searchTerm = '') {
     try {
       const { data: historyData, error: historyError } = await supabase
         .from('n8n_chat_histories')
-        .select('*')
+        .select('id, session_id, message, data')
         .eq('session_id', sessionId)
         .order('id', { ascending: false })
         .limit(1);
@@ -314,7 +285,7 @@ export function useConversations(searchTerm = '') {
 
   const fetchConversations = useCallback(async (page = 0, append = false, showLoading = false) => {
     const requestId = ++requestIdRef.current;
-    const offset = page * ITEMS_PER_PAGE;
+    const offset = page * CONVERSATIONS_PAGE_SIZE;
 
     try {
       if (page === 0 && showLoading) {
@@ -326,46 +297,60 @@ export function useConversations(searchTerm = '') {
         setSearching(true);
       }
 
-      let rows: SearchConversationRow[] = [];
-      let resultTotal: number | null = null;
+      const migratedPromise = painelFunctionDisponivel
+        ? supabase.functions
+            .invoke('atendimento-painel', {
+              body: {
+                action: 'conversas',
+                search: debouncedSearchTerm || undefined,
+                limit: CONVERSATIONS_PAGE_SIZE,
+                offset,
+              },
+            })
+            .then((res) => {
+              if (res.error) painelFunctionDisponivel = false;
+              return res;
+            })
+            .catch(() => {
+              painelFunctionDisponivel = false;
+              return { data: null, error: null };
+            })
+        : Promise.resolve({ data: null, error: null });
 
-      const { data, error } = await supabase.rpc('search_conversations', {
-        p_search: debouncedSearchTerm || null,
-        p_limit: ITEMS_PER_PAGE,
-        p_offset: offset,
-      });
+      const [legacy, migrated] = await Promise.all([
+        supabase.rpc('search_conversations', {
+          p_search: debouncedSearchTerm || null,
+          p_limit: CONVERSATIONS_PAGE_SIZE,
+          p_offset: offset,
+        }),
+        migratedPromise,
+      ]);
 
-      if (error) {
-        // Fall back to client query if RPC function does not exist in Supabase DB (PGRST202 / 404)
-        const isMissingFunction =
-          error.code === 'PGRST202' ||
-          error.code === '42883' ||
-          error.message?.includes('search_conversations');
-
-        if (isMissingFunction) {
-          console.warn('RPC search_conversations não encontrada no Supabase. Utilizando fallback direto...');
-          const fallbackResult = await fetchConversationsFallback(
-            debouncedSearchTerm,
-            page,
-            ITEMS_PER_PAGE
-          );
-          rows = fallbackResult.rows;
-          resultTotal = fallbackResult.total;
-        } else {
-          throw error;
-        }
-      } else {
-        rows = (data || []) as SearchConversationRow[];
-        resultTotal = rows.length > 0
-          ? Number(rows[0].total_count)
-          : page === 0
-            ? 0
-            : null;
-      }
-
+      if (legacy.error) throw legacy.error;
       if (requestId !== requestIdRef.current) return;
 
-      const pageConversations = rows.map(toConversation);
+      const rows = (legacy.data || []) as SearchConversationRow[];
+      const legacyConversations = rows.map(toConversation);
+      const migratedRows = !migrated.error && !migrated.data?.error
+        ? (migrated.data?.conversations || []) as AtendimentoConversationRow[]
+        : [];
+      const merged = new Map(legacyConversations.map((conversation) => [conversation.sessionId, conversation]));
+      for (const conversation of migratedRows.map(toAtendimentoConversation)) {
+        const current = merged.get(conversation.sessionId);
+        if (!current || (conversation.lastMessageDate?.getTime() || 0) >= (current.lastMessageDate?.getTime() || 0)) {
+          merged.set(conversation.sessionId, conversation);
+        }
+      }
+      const pageConversations = Array.from(merged.values()).sort((a, b) =>
+        (b.lastMessageDate?.getTime() || 0) - (a.lastMessageDate?.getTime() || 0)
+      );
+      const legacyTotal = rows.length > 0 ? Number(rows[0].total_count) : 0;
+      const migratedTotal = migratedRows.length > 0 ? Number(migratedRows[0].total_count) : 0;
+      const resultTotal = legacyTotal || migratedTotal
+        ? Math.max(legacyTotal, migratedTotal, pageConversations.length)
+        : page === 0
+          ? 0
+          : null;
 
       if (resultTotal !== null) {
         setTotalCount(resultTotal);

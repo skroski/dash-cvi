@@ -8,6 +8,7 @@ import {
   TableRow 
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Contact } from '@/types/client';
 import { ClientPendencia, Tag } from '@/types/crm';
 import TagBadge from '@/components/tags/TagBadge';
@@ -34,6 +35,7 @@ interface ClientsTableProps {
   onEditClick: (contact: Contact) => void;
   onMessageClick: (contact: Contact) => void;
   onDeleteClick: (contact: Contact) => void;
+  onToggleStatus?: (contact: Contact, newStatus: boolean) => void;
 }
 
 const parseDate = (dStr: string) => {
@@ -57,7 +59,8 @@ const ClientsTable = ({
   onContactClick,
   onEditClick,
   onMessageClick,
-  onDeleteClick
+  onDeleteClick,
+  onToggleStatus
 }: ClientsTableProps) => {
   const [internalSortField, setInternalSortField] = React.useState<SortField | null>(null);
   const [internalSortDirection, setInternalSortDirection] = React.useState<SortDirection>('asc');
@@ -236,14 +239,28 @@ const ClientsTable = ({
                     );
                   })()}
                 </TableCell>
-                <TableCell className="text-xs py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] ${
-                    contact.status === 'Active' 
-                      ? 'bg-success/10 text-success' 
-                      : 'bg-muted text-muted-foreground'
-                  }`}>
-                    {contact.status === 'Active' ? 'Ativo' : 'Inativo'}
-                  </span>
+                <TableCell className="text-xs py-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id={`client-status-${contact.id}`}
+                      checked={contact.status === 'Active'}
+                      onCheckedChange={(checked) => onToggleStatus?.(contact, checked)}
+                      aria-label={`Alterar status de ${contact.name}: ${contact.status === 'Active' ? 'Ativo' : 'Inativo'}`}
+                      className="h-5 w-9 data-[state=checked]:bg-emerald-600 [&>span]:h-4 [&>span]:w-4 [&>span]:data-[state=checked]:translate-x-4 cursor-pointer"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onToggleStatus?.(contact, contact.status !== 'Active')}
+                      title={`Clique para alterar para ${contact.status === 'Active' ? 'Inativo (false)' : 'Ativo (true)'}`}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors cursor-pointer hover:opacity-85 select-none ${
+                        contact.status === 'Active' 
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' 
+                          : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      {contact.status === 'Active' ? 'Ativo' : 'Inativo'}
+                    </button>
+                  </div>
                 </TableCell>
                 <TableCell className="text-xs py-3">{contact.lastContact}</TableCell>
                 <TableCell className="text-xs py-2 text-center" onClick={(e) => e.stopPropagation()}>

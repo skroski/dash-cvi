@@ -23,6 +23,19 @@ export default {
 				sans: ['"Inter Variable"', 'Inter', 'system-ui', 'sans-serif']
 			},
 			colors: {
+				// Cor da marca da fila (TV, totem): vem de fila_config.cor_marca via variáveis CSS.
+				fila: {
+					50: 'rgb(var(--fila-50) / <alpha-value>)',
+					100: 'rgb(var(--fila-100) / <alpha-value>)',
+					200: 'rgb(var(--fila-200) / <alpha-value>)',
+					300: 'rgb(var(--fila-300) / <alpha-value>)',
+					400: 'rgb(var(--fila-400) / <alpha-value>)',
+					500: 'rgb(var(--fila-500) / <alpha-value>)',
+					600: 'rgb(var(--fila-600) / <alpha-value>)',
+					700: 'rgb(var(--fila-700) / <alpha-value>)',
+					800: 'rgb(var(--fila-800) / <alpha-value>)',
+					900: 'rgb(var(--fila-900) / <alpha-value>)',
+				},
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',

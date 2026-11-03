@@ -9,7 +9,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Conversation } from '@/types/chat';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { getWebhookUrl } from '@/config/env';
 
 interface ClientSubHeaderProps {
   selectedConversation?: Conversation;
@@ -30,26 +29,15 @@ const ClientSubHeader = ({ selectedConversation, onConversationUpdate, updateCon
   const handleSave = async () => {
     if (editedContact && onConversationUpdate && selectedConversation?.clientData) {
       try {
-        const updateData: Record<string, any> = {
-          nome: editedContact.nome,
-          email: editedContact.email,
-          cpf_cnpj: editedContact.cpf_cnpj,
-          servico: editedContact.servico,
-        };
-
-        let { error } = await supabase
+        const { error } = await supabase
           .from('dados_cliente')
-          .update(updateData)
+          .update({
+            nome: editedContact.nome,
+            email: editedContact.email,
+            cpf_cnpj: editedContact.cpf_cnpj,
+            servico: editedContact.servico,
+          })
           .eq('id', selectedConversation.clientData.id);
-
-        if (error && error.code === 'PGRST204' && 'servico' in updateData) {
-          delete updateData.servico;
-          const retry = await supabase
-            .from('dados_cliente')
-            .update(updateData)
-            .eq('id', selectedConversation.clientData.id);
-          error = retry.error;
-        }
 
         if (error) throw error;
 
@@ -65,29 +53,6 @@ const ClientSubHeader = ({ selectedConversation, onConversationUpdate, updateCon
               servico: editedContact.servico,
             }
           });
-        }
-
-        // Sync with webhook
-        try {
-          await fetch(getWebhookUrl('edita_usuario', '/edita_usuario'), {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              id: selectedConversation.clientData.id,
-              name: editedContact.nome,
-              email: editedContact.email,
-              phone: selectedConversation.clientData.telefone,
-              petName: selectedConversation.petName || '',
-              petSize: selectedConversation.petType || '',
-              petBreed: selectedConversation.petBreed || '',
-              cpfCnpj: editedContact.cpf_cnpj,
-              asaasCustomerId: selectedConversation.clientData.asaas_customer_id || '',
-            }),
-          });
-        } catch (webhookError) {
-          console.error('Erro ao enviar para webhook:', webhookError);
         }
 
         toast.success("Cliente atualizado", { description: "As informações do cliente foram salvas com sucesso." });

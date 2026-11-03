@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { PawPrint, Mail, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { z } from 'zod';
 import { useAuth } from '@/context/AuthContext';
+import { ENV_DEFAULTS } from '@/config/env';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import SignupForm from '@/components/SignupForm';
 import GoogleSignInButton from '@/components/GoogleSignInButton';
@@ -16,7 +17,7 @@ const loginSchema = z.object({
 
 const Index = () => {
   const navigate = useNavigate();
-  const { signIn, user, isLoading: authLoading } = useAuth();
+  const { signIn, user, papel, isLoading: authLoading } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
@@ -37,9 +38,18 @@ const Index = () => {
 
   useEffect(() => {
     if (user) {
-      navigate('/dashboard');
+      const isVet =
+        (!!ENV_DEFAULTS.EMAIL_GRUPO_VETERINARIOS && user.email?.toLowerCase() === ENV_DEFAULTS.EMAIL_GRUPO_VETERINARIOS) ||
+        papel === 'veterinario';
+      if (papel === 'totem') {
+        navigate('/totem', { replace: true });
+      } else if (isVet) {
+        navigate('/dashboard', { replace: true });
+      } else {
+        navigate('/dashboard', { replace: true });
+      }
     }
-  }, [user, navigate]);
+  }, [user, papel, navigate]);
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword);
@@ -155,10 +165,10 @@ const Index = () => {
               className="glass-card animate-fade-in space-y-6 rounded-2xl p-8"
             >
               <h1 className="mb-2 text-center text-2xl font-bold text-white">
-                Bem-vindos ao Dashboard da VetBots!
+                Bem-vindos ao Dashboard do C.V.I. - Centro Veterinário Integrado!
               </h1>
               <p className="mb-6 text-center text-white/80">
-                Entre para gerenciar seu petshop
+                Entre para gerenciar sua clínica veterinária
               </p>
 
               <div className="space-y-4">
@@ -238,13 +248,23 @@ const Index = () => {
                 {isLoading ? "Entrando..." : "Login"}
               </button>
 
-              <div className="flex items-center gap-3" aria-hidden="true">
+              <div className="flex items-center gap-3 hidden" aria-hidden="true">
                 <span className="h-px flex-1 bg-white/20" />
                 <span className="text-xs uppercase tracking-wide text-white/50">ou</span>
                 <span className="h-px flex-1 bg-white/20" />
               </div>
 
-           
+
+              <p className="mt-6 text-center text-sm text-white/80 hidden">
+                Não tem uma conta?{' '}
+                <button
+                  type="button"
+                  onClick={() => setShowSignup(true)}
+                  className="text-amber-300 transition-colors duration-300 hover:text-white"
+                >
+                  Cadastre-se
+                </button>
+              </p>
             </form>
           ) : (
             <div className="glass-card animate-fade-in rounded-2xl p-8">

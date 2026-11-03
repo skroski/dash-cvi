@@ -13,8 +13,20 @@ import AttendantsPage from "./pages/AttendantsPage";
 import UsersPage from "./pages/UsersPage";
 import Evolution from "./pages/Evolution";
 import Schedule from "./pages/Schedule";
+import AgendaSettingsPage from "./pages/AgendaSettingsPage";
+import AtendimentoConfigPage from "./pages/AtendimentoConfigPage";
 import NotFound from "./pages/NotFound";
 import ConfigurationManager from "./pages/ConfigurationManager";
+import WebChatPage from "./pages/WebChatPage";
+import QueuePage from "./pages/QueuePage";
+import QueueTvPage from "./pages/QueueTvPage";
+import QueueRoomCallerPage from "./pages/QueueRoomCallerPage";
+import QueueTotemPage from "./pages/QueueTotemPage";
+import MyPromptPage from "./pages/MyPromptPage";
+import ProntuarioIaPage from "./pages/ProntuarioIaPage";
+import SmartPrescriptionPage from "./pages/SmartPrescriptionPage";
+import BularioPage from "./pages/BularioPage";
+import PrescriptionValidationPage from "./pages/PrescriptionValidationPage";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import ModuloGuard from "./components/layout/ModuloGuard";
 import AppShell from "./components/layout/AppShell";
@@ -38,7 +50,14 @@ const App = () => (
             <AtendenteAtivoProvider>
               <Routes>
                 <Route path="/" element={<Index />} />
+                <Route path="/tv" element={<QueueTvPage />} />
+                <Route path="/chamar" element={<QueueRoomCallerPage />} />
+                <Route path="/chamar/:roomId" element={<QueueRoomCallerPage />} />
+                <Route path="/validar-receita" element={<PrescriptionValidationPage />} />
+                <Route path="/validar-receita/:codigo" element={<PrescriptionValidationPage />} />
                 <Route element={<ProtectedRoute />}>
+                  {/* Totem: login com papel "totem", fora do AppShell (tela cheia de quiosque) */}
+                  <Route path="/totem" element={<QueueTotemPage />} />
                   <Route element={<AppShell />}>
                     <Route element={<ModuloGuard />}>
                       <Route path="/dashboard" element={<Dashboard />} />
@@ -50,7 +69,11 @@ const App = () => (
                       <Route path="/attendants" element={<AttendantsPage />} />
                       <Route path="/users" element={<UsersPage />} />
                       <Route path="/evolution" element={<Evolution />} />
+                      <Route path="/uazapi" element={<Evolution />} />
                       <Route path="/schedule" element={<Schedule />} />
+                      <Route path="/calendar" element={<Schedule />} />
+                      <Route path="/agenda-configuracao" element={<AgendaSettingsPage />} />
+                      <Route path="/atendimento-configuracao" element={<AtendimentoConfigPage />} />
                       <Route
                         path="/reminders"
                         element={
@@ -86,6 +109,12 @@ const App = () => (
                         }
                       />
                       <Route path="/configuration" element={<ConfigurationManager />} />
+                      <Route path="/web-chat" element={<WebChatPage />} />
+                      <Route path="/queue" element={<QueuePage />} />
+                      <Route path="/prontuario" element={<ProntuarioIaPage />} />
+                      <Route path="/receituario" element={<SmartPrescriptionPage />} />
+                      <Route path="/bulario" element={<BularioPage />} />
+                      <Route path="/my-prompt" element={<MyPromptPage />} />
                     </Route>
                   </Route>
                 </Route>

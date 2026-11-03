@@ -1,25 +1,22 @@
-import { is } from 'date-fns/locale';
 import { useState, useCallback } from 'react';
 
-export type AgendaType = 'consultaveterinaria' | 'vacinas' | 'exame' | 'hotel';
+export type AgendaType = 'todas' | 'consultaveterinaria' | 'vacinas' | 'exame';
 
-export function useAgendaType() {
-  const [agendaType, setAgendaType] = useState<AgendaType>('consultaveterinaria');
+export function useAgendaType(initialType: AgendaType = 'todas') {
+  const [agendaType, setAgendaType] = useState<AgendaType>(initialType);
 
   const changeAgendaType = useCallback((type: AgendaType) => {
     setAgendaType(type);
   }, []);
 
-  const getEndpointSuffix = useCallback(() => {
-    switch (agendaType) {
+  const getEndpointSuffix = useCallback((type: AgendaType = agendaType) => {
+    switch (type) {
       case 'consultaveterinaria':
         return '/consultaveterinaria';
       case 'vacinas':
         return '/vacinas';
       case 'exame':
         return '/exame';
-      case 'hotel':
-        return '/hotel';
       default:
         return '/consultaveterinaria';
     }
@@ -29,9 +26,9 @@ export function useAgendaType() {
     agendaType,
     changeAgendaType,
     getEndpointSuffix,
+    isTodas: agendaType === 'todas',
     isVet: agendaType === 'consultaveterinaria',
     isVacinas: agendaType === 'vacinas',
     isExame: agendaType === 'exame',
-    isHotel: agendaType === 'hotel',
   };
 }

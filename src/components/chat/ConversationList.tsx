@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,10 +23,11 @@ import UserAvatar from '@/components/shared/UserAvatar';
 import EmptyState from '@/components/shared/EmptyState';
 import { SkeletonList } from '@/components/shared/skeletons';
 import { formatDayTime, formatPhone } from '@/lib/formatters';
+import { stripHtmlAndFormatting } from '@/utils/formatMessage';
 import { PauseStatusMap, formatTtlDuration } from '@/hooks/useRedisPauseStatus';
 import { useConversationStatus } from '@/hooks/useConversationStatus';
 
-const PINS_STORAGE_KEY = 'vetbots-chat-pins';
+const PINS_STORAGE_KEY = 'cvi-chat-pins';
 
 const loadPins = (): string[] => {
   try {
@@ -54,6 +55,7 @@ interface ConversationListProps {
   emptyTitle?: string;
   emptyDescription?: string;
   endOfListText?: string;
+  conversationPageSize?: number;
 }
 
 const ConversationList = ({
@@ -73,7 +75,8 @@ const ConversationList = ({
   onHistoryDeleted,
   emptyTitle = 'Nenhuma conversa encontrada',
   emptyDescription = 'Ajuste os filtros ou aguarde novas mensagens dos clientes.',
-  endOfListText = 'Todas as conversas foram carregadas'
+  endOfListText = 'Todas as conversas foram carregadas',
+  conversationPageSize = 200
 }: ConversationListProps) => {
   // Force re-render every minute so elapsed pause time stays accurate
   const [, setTick] = useState(0);
@@ -87,6 +90,7 @@ const ConversationList = ({
   // Conversas fechadas/arquivadas expandidas manualmente (mostram o card completo)
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [showArquivadas, setShowArquivadas] = useState(false);
+  const [reopeningConversationId, setReopeningConversationId] = useState<string | null>(null);
 
   const toggleExpanded = (conversationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -103,7 +107,18 @@ const ConversationList = ({
 
   const handleReabrir = (conversationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    reabrirConversa(conversationId);
+    setReopeningConversationId(conversationId);
+    reabrirConversa(conversationId, {
+      onSuccess: () => {
+        setReopeningConversationId(null);
+        setExpandedRows(prev => {
+          const next = new Set(prev);
+          next.delete(conversationId);
+          return next;
+        });
+      },
+      onError: () => setReopeningConversationId(null),
+    });
   };
 
   const getPauseInfo = (phone: string) => {
@@ -131,8 +146,10 @@ const ConversationList = ({
     });
   };
 
+  const loadingMoreLabel = `Carregando até ${conversationPageSize} conversas...`;
+
   // Sort conversations: pinned first, then by date
-  const sortedConversations = [...conversations].sort((a, b) => {
+  const sortedConversations = useMemo(() => [...conversations].sort((a, b) => {
     const aIsPinned = pinnedConversations.includes(a.id);
     const bIsPinned = pinnedConversations.includes(b.id);
 
@@ -142,24 +159,39 @@ const ConversationList = ({
     const dateA = a.lastMessageDate ? new Date(a.lastMessageDate).getTime() : 0;
     const dateB = b.lastMessageDate ? new Date(b.lastMessageDate).getTime() : 0;
     return dateB - dateA;
-  });
+  }), [conversations, pinnedConversations]);
 
   // Ciclo de vida: abertas no topo; fechadas retraídas logo abaixo;
   // arquivadas em seção recolhida no fim da lista
-  const statusOf = (conversation: Conversation) =>
-    statusPorSession.get(conversation.id)?.status ?? 'aberta';
-  const abertas = sortedConversations.filter(c => statusOf(c) === 'aberta');
-  const fechadas = sortedConversations.filter(c => statusOf(c) === 'fechada');
-  const arquivadas = sortedConversations.filter(c => statusOf(c) === 'arquivada');
+  const { abertas, fechadas, arquivadas } = useMemo(() => {
+    const groups = {
+      abertas: [] as Conversation[],
+      fechadas: [] as Conversation[],
+      arquivadas: [] as Conversation[],
+    };
+
+    for (const conversation of sortedConversations) {
+      const status = statusPorSession.get(conversation.id)?.status ?? 'aberta';
+      if (status === 'fechada') {
+        groups.fechadas.push(conversation);
+      } else if (status === 'arquivada') {
+        groups.arquivadas.push(conversation);
+      } else {
+        groups.abertas.push(conversation);
+      }
+    }
+
+    return groups;
+  }, [sortedConversations, statusPorSession]);
   // Filtro "Arquivadas" ativo: a seção não pode nascer recolhida
   const somenteArquivadas =
     abertas.length === 0 && fechadas.length === 0 && arquivadas.length > 0;
 
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  // Observa o sentinela (fim da lista) e carrega a próxima página de 100 quando ele
+  // Observa o sentinela (fim da lista) e carrega a próxima página quando ele
   // fica visível. Roda em useEffect (não em callback ref) para garantir que scrollRef
-  // e sentinelRef já estejam montados — refs de filhos podem ser anexados antes do
+  // e sentinelRef já estejam montados - refs de filhos podem ser anexados antes do
   // ref do pai durante o commit do React, deixando scrollRef.current nulo cedo demais.
   useEffect(() => {
     if (!hasMore || loadingMore || !onLoadMore) return;
@@ -190,6 +222,7 @@ const ConversationList = ({
   const renderRetractedRow = (conversation: Conversation, statusInfo: ConversationStatusInfo) => {
     const isSelected = selectedChat === conversation.id;
     const isArquivada = statusInfo.status === 'arquivada';
+    const isReopening = reopeningConversationId === conversation.id;
 
     return (
       <div
@@ -252,12 +285,16 @@ const ConversationList = ({
             <Button
               size="icon"
               variant="ghost"
-              aria-label="Reabrir conversa"
+              aria-label={isReopening ? 'Reabrindo conversa' : 'Reabrir conversa'}
               onClick={(e) => handleReabrir(conversation.id, e)}
               disabled={mudandoStatus}
               className="h-7 w-7 text-muted-foreground hover:text-primary"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
+              {isReopening ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
             </Button>
           </div>
         </div>
@@ -279,6 +316,7 @@ const ConversationList = ({
     const isRetraivel = !!statusInfo && statusInfo.status !== 'aberta';
     const isArquivada = statusInfo?.status === 'arquivada';
     const statusDate = isArquivada ? statusInfo?.arquivadaEm : statusInfo?.fechadaEm;
+    const isReopening = reopeningConversationId === conversation.id;
 
     return (
       <div
@@ -324,7 +362,7 @@ const ConversationList = ({
 
             <div className="mt-0.5 flex items-center justify-between gap-2">
               <p className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-                {conversation.lastMessage}
+                {stripHtmlAndFormatting(conversation.lastMessage)}
               </p>
               {conversation.unread > 0 && (
                 <Badge className="shrink-0 bg-primary px-1.5 text-primary-foreground" aria-label={`${conversation.unread} mensagens não lidas`}>
@@ -412,8 +450,12 @@ const ConversationList = ({
               disabled={mudandoStatus}
               className="ml-auto h-7 px-2 text-xs"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Reabrir
+              {isReopening ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
+              {isReopening ? 'Reabrindo...' : 'Reabrir'}
             </Button>
           </div>
         )}
@@ -463,7 +505,7 @@ const ConversationList = ({
                 )}
                 Ativar
               </Button>
-              <div onClick={(e) => e.stopPropagation()}>
+              <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
                 <DeleteChatHistoryDialog
                   sessionId={conversation.sessionId}
                   clientName={conversation.name}
@@ -538,9 +580,9 @@ const ConversationList = ({
       ))}
 
       {loadingMore && (
-        <div className="flex items-center justify-center p-4" role="status">
+        <div className="flex items-center justify-center p-4" role="status" aria-live="polite">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
-          <span className="ml-2 text-sm text-muted-foreground">Carregando mais conversas...</span>
+          <span className="ml-2 text-sm text-muted-foreground">{loadingMoreLabel}</span>
         </div>
       )}
 

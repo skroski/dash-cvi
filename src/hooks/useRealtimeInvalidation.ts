@@ -3,27 +3,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
 /**
- * Invalida as queries de métricas/resumo quando há mudanças em dados_cliente.
- * Substitui o antigo useDashboardRealtime, que atualizava estado descartado.
+ * Hook de invalidação em tempo real do dashboard.
+ *
+ * NOTA (Otimização de Egress):
+ * A escuta indiscriminada de postgres_changes na tabela dados_cliente foi desativada
+ * para evitar tempestades de revalidação e download contínuo de tabelas inteiras
+ * a cada webhook/mensagem recebida no WhatsApp/n8n.
+ * As métricas utilizam staleTime e revalidação sob demanda (troca de abas / foco).
  */
 export function useRealtimeInvalidation() {
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('dashboard-invalidation')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'dados_cliente' },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['metrics'] });
-          queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
+  // Desativado intencionalmente para proteção de Realtime e Database Egress.
 }

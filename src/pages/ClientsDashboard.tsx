@@ -77,6 +77,7 @@ const ClientsDashboard = () => {
     handleEditContact,
     handleDeleteContact,
     openEditModal,
+    handleToggleStatus,
     handleMessageClick,
     handleMessageSubmit,
     handlePauseDurationConfirm
@@ -95,7 +96,7 @@ const ClientsDashboard = () => {
                 <CardTitle className="text-xl">Gerenciamento de Clientes</CardTitle>
                 <CardDescription>Visualize, adicione e edite seus clientes</CardDescription>
               </div>
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col sm:flex-row gap-3" data-tour="clients-actions">
                 <ClientSearchBar
                   searchTerm={searchTerm}
                   onSearchTermChange={setSearchTerm}
@@ -130,7 +131,10 @@ const ClientsDashboard = () => {
             </div>
 
             {/* Filters Toolbar */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 pt-3 border-t border-border">
+            <div
+              className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 pt-3 border-t border-border"
+              data-tour="clients-filters"
+            >
               <div className="flex flex-col gap-1.5">
                 <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Status</span>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -229,7 +233,7 @@ const ClientsDashboard = () => {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="p-0" data-tour="clients-table">
           <ClientsTable
             contacts={contacts}
             isLoading={loadingContacts}
@@ -242,13 +246,17 @@ const ClientsDashboard = () => {
             onContactClick={handleContactClick}
             onEditClick={openEditModal}
             onMessageClick={handleMessageClick}
+            onToggleStatus={handleToggleStatus}
             onDeleteClick={(contact) => {
               setSelectedContact(contact);
               setIsDeleteDialogOpen(true);
             }}
           />
         </CardContent>
-        <CardFooter className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t bg-muted/50 px-6 py-4">
+        <CardFooter
+          className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t bg-muted/50 px-6 py-4"
+          data-tour="clients-pagination"
+        >
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span>
               Exibindo <strong className="font-semibold text-foreground">{fromRecord}</strong> a <strong className="font-semibold text-foreground">{toRecord}</strong> de <strong className="font-semibold text-foreground">{totalCount.toLocaleString('pt-BR')}</strong> clientes

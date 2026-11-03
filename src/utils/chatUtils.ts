@@ -58,15 +58,28 @@ export const parseMessage = (chat: N8nChatHistory): ChatMessage[] => {
   try {
     const timestamp = new Date(chat.hora || chat.data || new Date()).toISOString();
 
-    const normalize = (msg: any): ChatMessage[] =>
+    /**
+     * Identidade estável da mensagem, derivada da linha do n8n. É o que permite
+     * deduplicar mídia por identidade em vez de heurística de horário — sem
+     * isso, uma rajada de fotos do cliente colapsa numa só no realtime.
+     * O sufixo separa os itens de uma mesma linha em lote.
+     */
+    const messageId = (indice?: number): string | undefined =>
+      chat.id === undefined || chat.id === null
+        ? undefined
+        : `n8n:${chat.id}${indice === undefined ? '' : `:${indice}`}`;
+
+    const normalize = (msg: any, indice?: number): ChatMessage[] =>
       msg?.role && (msg?.content !== undefined || msg?.mediaUrl)
-        ? [{ 
-            role: msg.role, 
-            content: msg.content || '', 
+        ? [{
+            role: msg.role,
+            content: msg.content || '',
             timestamp,
             type: msg.type,
             mediaUrl: msg.mediaUrl,
-            fileName: msg.fileName
+            fileName: msg.fileName,
+            messageId: messageId(indice),
+            origem: 'historico'
           }]
         : [];
 
@@ -80,16 +93,18 @@ export const parseMessage = (chat: N8nChatHistory): ChatMessage[] => {
             content: parsed.content || '',
             timestamp,
             mediaUrl: parsed.mediaUrl,
-            fileName: parsed.fileName
+            fileName: parsed.fileName,
+            messageId: messageId(),
+            origem: 'historico'
           }];
         }
       } catch {
-        return [{ role: 'unknown', content: chat.message, timestamp }];
+        return [{ role: 'unknown', content: chat.message, timestamp, messageId: messageId(), origem: 'historico' }];
       }
     }
 
     if (Array.isArray(chat.message?.messages)) {
-      return chat.message.messages.flatMap(normalize);
+      return chat.message.messages.flatMap((msg, i) => normalize(msg, i));
     }
 
     if (chat.message?.type || chat.message?.content || chat.message?.mediaUrl) {
@@ -99,7 +114,9 @@ export const parseMessage = (chat: N8nChatHistory): ChatMessage[] => {
         content: chat.message.content || '',
         timestamp,
         mediaUrl: chat.message.mediaUrl,
-        fileName: chat.message.fileName
+        fileName: chat.message.fileName,
+        messageId: messageId(),
+        origem: 'historico'
       }];
     }
 

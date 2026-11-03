@@ -12,7 +12,7 @@ create table if not exists public.mensagens_agendadas (
   programado_para timestamptz not null,
   timezone text not null default 'America/Sao_Paulo',
   remetente text not null default 'cvi'
-    check (remetente in ('cvi', 'banhotosa')),
+    check (remetente in ('cvi')),
   status text not null default 'pendente'
     check (status in ('pendente', 'processando', 'enviado', 'falha', 'cancelado')),
   tentativas smallint not null default 0 check (tentativas >= 0),

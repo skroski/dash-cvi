@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Contact } from '@/types/client';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { getWebhookUrl } from '@/config/env';
+import { sendText } from '@/services/uazapi';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 
 export type SortField = 'name' | 'email' | 'phone' | 'petName' | 'status' | 'lastContact';
 export type SortDirection = 'asc' | 'desc';
@@ -133,20 +134,31 @@ export const useClientManagement = () => {
 
   const fetchUniqueBreeds = useCallback(async () => {
     try {
+      const { data: rpcData, error: rpcErr } = await (supabase.rpc as any)('get_distinct_pet_breeds');
+      if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+        setUniqueBreeds(rpcData.map((r: any) => r.breed).filter(Boolean));
+        return;
+      }
+    } catch {
+      // Ignora erro e cai no fallback leve abaixo
+    }
+
+    try {
+      // Fallback leve sem paginar a tabela inteira (evita transferir 10k+ linhas)
       const { data } = await supabase
         .from('dados_cliente')
         .select('raca_pet')
-        .not('raca_pet', 'is', null);
+        .not('raca_pet', 'is', null)
+        .order('id', { ascending: false })
+        .limit(1000);
 
-      if (data) {
-        const breeds = new Set<string>();
-        data.forEach(item => {
-          if (item.raca_pet && item.raca_pet.trim()) {
-            breeds.add(item.raca_pet.trim());
-          }
-        });
-        setUniqueBreeds(Array.from(breeds).sort());
-      }
+      const breeds = new Set<string>();
+      (data || []).forEach(item => {
+        if (item.raca_pet && item.raca_pet.trim()) {
+          breeds.add(item.raca_pet.trim());
+        }
+      });
+      setUniqueBreeds(Array.from(breeds).sort());
     } catch (err) {
       console.error('Erro ao carregar raças de pets:', err);
     }
@@ -159,6 +171,13 @@ export const useClientManagement = () => {
       let query = supabase
         .from('dados_cliente')
         .select('*', { count: 'exact' });
+
+      // 0. Filtro de Status (true = Ativo, false = Inativo)
+      if (statusFilter === 'Active') {
+        query = query.neq('status', false);
+      } else if (statusFilter === 'Inactive') {
+        query = query.eq('status', false);
+      }
 
       // 1. Termo de busca (nome, email, telefone, nome_pet, cpf_cnpj)
       const cleanSearch = searchTerm.trim();
@@ -249,7 +268,7 @@ export const useClientManagement = () => {
         email: 'email',
         phone: 'telefone',
         petName: 'nome_pet',
-        status: 'id',
+        status: 'status',
         lastContact: 'created_at',
       };
 
@@ -265,14 +284,53 @@ export const useClientManagement = () => {
       const to = from + pageSize - 1;
       query = query.range(from, to);
 
-      const { data, count, error } = await query;
+      let { data, count, error } = await query;
+
+      // Fallback gracioso se a migration da coluna status ainda não tiver sido executada no banco
+      if (error && (error as any).code === '42703' && (statusFilter !== 'All' || sortField === 'status')) {
+        let fallbackQuery = supabase
+          .from('dados_cliente')
+          .select('*', { count: 'exact' });
+
+        if (cleanSearch) {
+          const sanitized = cleanSearch.replace(/[,()]/g, '');
+          if (sanitized) {
+            fallbackQuery = fallbackQuery.or(
+              `nome.ilike.%${sanitized}%,email.ilike.%${sanitized}%,telefone.ilike.%${sanitized}%,nome_pet.ilike.%${sanitized}%,cpf_cnpj.ilike.%${sanitized}%`
+            );
+          }
+        }
+        if (hasPetFilter === 'yes') {
+          fallbackQuery = fallbackQuery.not('nome_pet', 'is', null).neq('nome_pet', '');
+        } else if (hasPetFilter === 'no') {
+          fallbackQuery = fallbackQuery.or('nome_pet.is.null,nome_pet.eq.');
+        }
+        if (petSizeFilter !== 'All') {
+          fallbackQuery = fallbackQuery.ilike('porte_pet', petSizeFilter);
+        }
+        if (petBreedFilter !== 'All') {
+          fallbackQuery = fallbackQuery.eq('raca_pet', petBreedFilter);
+        }
+
+        const safeSortCol = dbSortCol === 'status' ? 'created_at' : dbSortCol;
+        fallbackQuery = fallbackQuery.order(safeSortCol, { ascending: isAsc, nullsFirst: false });
+        if (safeSortCol !== 'id') {
+          fallbackQuery = fallbackQuery.order('id', { ascending: isAsc });
+        }
+        fallbackQuery = fallbackQuery.range(from, to);
+
+        const res = await fallbackQuery;
+        data = res.data;
+        count = res.count;
+        error = res.error;
+      }
 
       if (error) {
         throw error;
       }
 
       if (data) {
-        const formattedContacts: Contact[] = data.map(client => ({
+        const formattedContacts: Contact[] = data.map((client: any) => ({
           id: client.id.toString(),
           name: client.nome || 'Cliente sem nome',
           email: client.email,
@@ -283,7 +341,7 @@ export const useClientManagement = () => {
           cpfCnpj: client.cpf_cnpj,
           asaasCustomerId: client.asaas_customer_id,
           payments: client.payments,
-          status: 'Active',
+          status: client.status === false ? 'Inactive' : 'Active',
           notes: '',
           lastContact: client.created_at ? new Date(client.created_at).toLocaleDateString('pt-BR') : 'Desconhecido'
         }));
@@ -339,7 +397,8 @@ export const useClientManagement = () => {
             raca_pet: newContact.petBreed,
             cpf_cnpj: newContact.cpfCnpj,
             asaas_customer_id: newContact.asaasCustomerId,
-            payments: newContact.payments || null
+            payments: newContact.payments || null,
+            status: newContact.status !== 'Inactive'
           }
         ])
         .select();
@@ -368,17 +427,6 @@ export const useClientManagement = () => {
 
         toast.success("Cliente adicionado", { description: `${newContact.name} foi adicionado com sucesso.` });
 
-        try {
-          await fetch(getWebhookUrl('cria_usuario', '/cria_usuario'), {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(newContact),
-          });
-        } catch (webhookError) {
-          console.error('Erro ao enviar para webhook:', webhookError);
-        }
       }
     } catch (error) {
       console.error('Erro ao cadastrar cliente:', error);
@@ -401,7 +449,8 @@ export const useClientManagement = () => {
           raca_pet: newContact.petBreed,
           cpf_cnpj: newContact.cpfCnpj,
           asaas_customer_id: newContact.asaasCustomerId,
-          payments: newContact.payments
+          payments: newContact.payments,
+          status: newContact.status !== 'Inactive'
         })
         .eq('id', parseInt(selectedContact.id));
 
@@ -414,23 +463,54 @@ export const useClientManagement = () => {
 
       toast.success("Cliente atualizado", { description: `As informações de ${selectedContact.name} foram atualizadas.` });
 
-      try {
-        await fetch(getWebhookUrl('edita_usuario', '/edita_usuario'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            id: selectedContact.id,
-            ...newContact
-          }),
-        });
-      } catch (webhookError) {
-        console.error('Erro ao enviar para webhook:', webhookError);
-      }
     } catch (error) {
       console.error('Erro ao atualizar cliente:', error);
       toast.error("Erro ao atualizar cliente", { description: "Não foi possível atualizar o cliente no banco de dados." });
+    }
+  };
+
+  const handleToggleStatus = async (contact: Contact, newStatusBool?: boolean) => {
+    const nextBool = newStatusBool !== undefined ? newStatusBool : contact.status !== 'Active';
+    const nextStatusText: 'Active' | 'Inactive' = nextBool ? 'Active' : 'Inactive';
+    const previousStatus = contact.status;
+
+    // Atualização otimista imediata na UI
+    setContacts(prev =>
+      prev.map(c => (c.id === contact.id ? { ...c, status: nextStatusText } : c))
+    );
+    if (selectedContact?.id === contact.id) {
+      setSelectedContact(prev => (prev ? { ...prev, status: nextStatusText } : null));
+    }
+
+    try {
+      const { error } = await supabase
+        .from('dados_cliente')
+        .update({ status: nextBool } as any)
+        .eq('id', parseInt(contact.id, 10));
+
+      if (error) throw error;
+
+      toast.success(
+        nextBool ? 'Cliente ativado' : 'Cliente inativado',
+        {
+          description: `${contact.name || 'Cliente'} agora está com status ${nextBool ? 'Ativo (true)' : 'Inativo (false)'}.`,
+        }
+      );
+    } catch (err: any) {
+      console.error('Erro ao alternar status do cliente:', err);
+      // Reverter alteração otimista
+      setContacts(prev =>
+        prev.map(c => (c.id === contact.id ? { ...c, status: previousStatus } : c))
+      );
+      if (selectedContact?.id === contact.id) {
+        setSelectedContact(prev => (prev ? { ...prev, status: previousStatus } : null));
+      }
+      toast.error('Erro ao alterar status', {
+        description:
+          err?.code === '42703'
+            ? 'A coluna "status" ainda não foi criada no banco. Execute a migration mais recente do Supabase.'
+            : (err?.message || 'Não foi possível salvar o status no banco de dados.'),
+      });
     }
   };
 
@@ -454,17 +534,6 @@ export const useClientManagement = () => {
 
       toast.error("Cliente removido", { description: `${selectedContact.name} foi removido da sua lista de clientes.` });
 
-      try {
-        await fetch(getWebhookUrl('exclui_usuario', '/exclui_usuario'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ phone: selectedContact.phone }),
-        });
-      } catch (webhookError) {
-        console.error('Erro ao enviar para webhook:', webhookError);
-      }
     } catch (error) {
       console.error('Erro ao excluir cliente:', error);
       toast.error("Erro ao remover cliente", { description: "Não foi possível remover o cliente do banco de dados." });
@@ -512,20 +581,16 @@ export const useClientManagement = () => {
     if (!selectedContact) return;
 
     try {
-      const response = await fetch(getWebhookUrl('mensagem', '/envia_mensagem'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          phone: selectedContact.phone,
-          message: messageText,
-          pauseDuration: duration
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Falha ao enviar dados para o webhook');
+      await sendText(selectedContact.phone, messageText);
+      if (duration !== null) {
+        const { data, error } = await supabase.functions.invoke('atendimento-controle', {
+          body: {
+            action: 'pausar',
+            sessionId: selectedContact.phone,
+            durationSeconds: duration * 60 * 60,
+          },
+        });
+        if (error || data?.error) throw new Error('Mensagem enviada, mas não foi possível pausar o bot.');
       }
 
       setIsPauseDurationDialogOpen(false);
@@ -600,6 +665,7 @@ export const useClientManagement = () => {
     handleEditContact,
     handleDeleteContact,
     openEditModal,
+    handleToggleStatus,
     handleMessageClick,
     handleMessageSubmit,
     handlePauseDurationConfirm

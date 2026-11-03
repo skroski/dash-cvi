@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
-import { Users, PawPrint, UserPlus, PauseCircle, MessageSquareWarning, BarChart3, QrCode, Plus, BellRing, ClipboardCheck } from 'lucide-react';
+import { Users, PawPrint, UserPlus, PauseCircle, MessageSquareWarning, BarChart3, QrCode, Plus, BellRing, ClipboardCheck, CalendarDays } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import PageContainer from '@/components/layout/PageContainer';
 import StatCard from '@/components/shared/StatCard';
 import RecentClientsTable from '@/components/metrics/RecentClientsTable';
+import { DashboardAppointmentsList } from '@/components/schedule/DashboardAppointmentsList';
 import { useAuth } from '@/context/AuthContext';
 import { useDashboardSummary } from '@/hooks/useDashboardSummary';
 import { useRedisPauseStatus } from '@/hooks/useRedisPauseStatus';
@@ -41,7 +42,10 @@ const Dashboard = () => {
         <p className="mt-1 text-sm capitalize text-muted-foreground">{today}</p>
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:gap-6">
+      <div
+        className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:gap-6"
+        data-tour="dashboard-stats"
+      >
         <StatCard
           title="Total de Clientes"
           value={summary?.totalClients ?? 0}
@@ -72,10 +76,11 @@ const Dashboard = () => {
           hint="Conversas em atendimento humano"
           loading={false}
           href="/chats?filter=paused"
+          dataTour="dashboard-bots-pausados"
         />
       </div>
 
-      <Card className="mb-6 shadow-sm">
+      <Card className="mb-6 shadow-sm" data-tour="dashboard-quick-actions">
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold">Ações rápidas</CardTitle>
         </CardHeader>
@@ -116,10 +121,20 @@ const Dashboard = () => {
               Pesquisas de satisfação
             </Link>
           </Button>
+          {/* <Button asChild variant="outline" className="gap-2">
+            <Link to="/schedule">
+              <CalendarDays className="h-4 w-4" aria-hidden="true" />
+              Ver agenda
+            </Link>
+          </Button> */}
         </CardContent>
       </Card>
 
-      <RecentClientsTable clients={summary?.recentClients ?? []} loading={loading} />
+      {/* <DashboardAppointmentsList /> */}
+
+      <div data-tour="dashboard-recent">
+        <RecentClientsTable clients={summary?.recentClients ?? []} loading={loading} />
+      </div>
     </PageContainer>
   );
 };

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 
 export interface PauseInfo {
   ttl: number; // seconds remaining: -1 = indefinite, >= 0 = limited
@@ -9,35 +10,33 @@ export type PauseStatusMap = Map<string, PauseInfo>;
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 
+let controleFunctionDisponivel = true;
+
 export function useRedisPauseStatus(): PauseStatusMap {
   const [statusMap, setStatusMap] = useState<PauseStatusMap>(new Map());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchStatus = useCallback(async () => {
+    if (!controleFunctionDisponivel) return;
     try {
-      const response = await fetch('/api/redis-pause-status', {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+      const { data, error } = await supabase.functions.invoke('atendimento-controle', {
+        body: { action: 'listar' },
       });
-
-      if (!response.ok) {
-        console.error('[useRedisPauseStatus] API returned', response.status);
+      if (error || data?.error || !Array.isArray(data?.pauses)) {
+        controleFunctionDisponivel = false;
+        if (import.meta.env.DEV) {
+          console.warn('[useRedisPauseStatus] pause query unavailable:', error?.message || data?.error);
+        }
         return;
       }
 
-      const data = await response.json();
-
-      if (!data?.success || !data?.data) return;
-
       const map: PauseStatusMap = new Map();
-
-      for (const [phone, info] of Object.entries(
-        data.data as Record<string, { ttl: number }>
-      )) {
-        // phone from Redis is already "5511XXXXXXXX" (digits + country code)
-        // normalize: keep only digits
-        const normalizedPhone = phone.replace(/\D/g, '');
-        map.set(normalizedPhone, { ttl: info.ttl });
+      const now = Date.now();
+      for (const pause of data.pauses as Array<{ session_id?: string; expira_em?: string }>) {
+        const normalizedPhone = String(pause.session_id || '').replace(/\D/g, '');
+        const expiry = new Date(String(pause.expira_em || '')).getTime();
+        const ttl = Math.max(0, Math.ceil((expiry - now) / 1000));
+        if (normalizedPhone && ttl > 0) map.set(normalizedPhone, { ttl });
       }
 
       setStatusMap(map);

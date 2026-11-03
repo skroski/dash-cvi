@@ -38,12 +38,21 @@ export function useRealtimeUpdates({
         }
       )
       .subscribe();
+
+    // As novas tabelas de atendimento são privadas por RLS e são expostas ao
+    // painel por uma Edge Function autenticada. Este polling leve substitui a
+    // assinatura direta nelas durante a transição e mantém a lista atualizada
+    // mesmo depois de o n8n ser removido.
+    const migratedPolling = window.setInterval(() => {
+      void fetchConversations().catch((error) => console.error('Error refreshing migrated conversations:', error));
+    }, 15_000);
       
     console.log('Realtime subscription established');
       
     return () => {
       console.log('Cleaning up realtime subscription');
       subscription.unsubscribe();
+      window.clearInterval(migratedPolling);
     };
   }, [updateConversationLastMessage, fetchConversations]);
 }

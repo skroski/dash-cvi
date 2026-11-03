@@ -100,7 +100,6 @@ import {
   SatisfactionDelivery,
   SatisfactionDeliveryStatus,
 } from '@/types/satisfaction';
-import { SatisfactionSpreadsheetImportRow } from '@/types/spreadsheet';
 
 const STATUS_META: Record<
   SatisfactionDeliveryStatus,
@@ -446,6 +445,7 @@ const SatisfactionSurveysPage = () => {
     <PageContainer>
       <PageHeader
         title="Pesquisas de Satisfação"
+        dataTour="surveys-header"
         description="Controle quem recebeu, acompanhe respostas e importe resultados do Google Forms."
         actions={
           <>
@@ -498,7 +498,7 @@ const SatisfactionSurveysPage = () => {
         </Alert>
       )}
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" data-tour="surveys-stats">
         <StatCard
           title="Tutores controlados"
           value={deliveries.length}
@@ -536,7 +536,7 @@ const SatisfactionSurveysPage = () => {
       </div>
 
       <Tabs defaultValue="controle" className="space-y-4">
-        <TabsList className="h-auto w-full justify-start overflow-x-auto p-1 sm:w-auto">
+        <TabsList className="h-auto w-full justify-start overflow-x-auto p-1 sm:w-auto" data-tour="surveys-tabs">
           <TabsTrigger value="controle" className="min-h-10 gap-2">
             <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
             Controle de envios
@@ -1157,7 +1157,7 @@ const SatisfactionSurveysPage = () => {
         onSubmit={handleSave}
       />
 
-      <SpreadsheetImportDialog<SatisfactionSpreadsheetImportRow>
+      <SpreadsheetImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}
         title="Importar controles de satisfação"

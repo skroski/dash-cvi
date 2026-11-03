@@ -79,7 +79,6 @@ insert into public.pendencia_tipos (nome) values
   ('Ultrassom'),
   ('Raio-X'),
   ('Consulta de retorno'),
-  ('Banho e tosa'),
   ('Castração'),
   ('Limpeza dentária')
 on conflict (nome) do nothing;

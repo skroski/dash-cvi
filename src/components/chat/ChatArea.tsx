@@ -50,8 +50,11 @@ const ChatArea = ({
         onOpenInfo={onOpenInfo}
         onHistoryDeleted={onHistoryDeleted}
       />
-      <div className="min-h-0 flex-1 overflow-y-scroll">
-        <MessageList messages={messages} loading={loading} />
+      {/* Sem overflow aqui: o único scroller da thread é o viewport do
+          ScrollArea dentro do MessageList. Empilhar containers roláveis fazia
+          a roda do mouse ser consumida antes de chegar nos listeners. */}
+      <div className="min-h-0 flex-1">
+        <MessageList conversationId={selectedChat} messages={messages} loading={loading} />
       </div>
       {status === 'aberta' ? (
         <MessageInput

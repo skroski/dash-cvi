@@ -1,4 +1,37 @@
-project_id = "napeofeenweerjhqucua"
+project_id = "fljoklfmiqgsxwtkbbop"
 
 [functions.google-forms-satisfaction]
+verify_jwt = false
+
+[functions.lembretes]
+verify_jwt = false
+
+[functions.agenda]
+verify_jwt = false
+
+[functions.uazapi-webhook]
+verify_jwt = false
+
+[functions.atendimento-worker]
+verify_jwt = false
+
+[functions.atendimento-outbox]
+verify_jwt = false
+
+[functions.whatsapp]
+verify_jwt = false
+
+[functions.atendimento-controle]
+verify_jwt = false
+
+[functions.atendimento-media-worker]
+verify_jwt = false
+
+[functions.conhecimento]
+verify_jwt = false
+
+[functions.atendimento-painel]
+verify_jwt = false
+
+[functions.atendimento-config]
 verify_jwt = false

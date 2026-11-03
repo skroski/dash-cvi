@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { segredo } from '../_shared/segredos.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -41,7 +42,7 @@ Deno.serve(async (request) => {
     return json({ error: 'Método não permitido' }, 405);
   }
 
-  const expectedSecret = Deno.env.get('GOOGLE_FORMS_WEBHOOK_SECRET');
+  const expectedSecret = segredo('GOOGLE_FORMS_WEBHOOK_SECRET');
   const providedSecret = request.headers.get('x-webhook-secret');
   if (!expectedSecret) {
     console.error('GOOGLE_FORMS_WEBHOOK_SECRET não configurado');

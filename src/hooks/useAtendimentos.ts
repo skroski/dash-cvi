@@ -94,14 +94,16 @@ export function useAtendimentos() {
   const atendimentosQuery = useQuery({
     queryKey: ATENDIMENTOS_KEY,
     queryFn: fetchAtendimentosAbertos,
-    staleTime: 15_000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
     retry: false,
   });
 
   const transferenciasQuery = useQuery({
     queryKey: TRANSFERENCIAS_KEY,
     queryFn: fetchTransferencias,
-    staleTime: 30_000,
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
     retry: false,
   });
 
@@ -140,7 +142,12 @@ export function useAtendimentos() {
           queryClient.invalidateQueries({ queryKey: TRANSFERENCIAS_KEY });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          queryClient.invalidateQueries({ queryKey: ATENDIMENTOS_KEY });
+          queryClient.invalidateQueries({ queryKey: TRANSFERENCIAS_KEY });
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);

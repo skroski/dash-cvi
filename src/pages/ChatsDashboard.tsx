@@ -2,8 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import ChatLayout from '@/components/chat/ChatLayout';
-import { useConversations } from '@/hooks/useConversations';
+import { CONVERSATIONS_PAGE_SIZE, useConversations } from '@/hooks/useConversations';
 import { useRealtimeUpdates } from '@/hooks/useRealtimeUpdates';
 import { useChatMessages } from '@/hooks/useChatMessages';
 import { useUazapiGroups } from '@/hooks/useUazapiGroups';
@@ -11,19 +12,31 @@ import PauseDurationDialog from '@/components/PauseDurationDialog';
 import { useRedisPauseStatus } from '@/hooks/useRedisPauseStatus';
 import { usePendencias } from '@/hooks/usePendencias';
 import { useTags } from '@/hooks/useTags';
-import { useConversationStatus } from '@/hooks/useConversationStatus';
+import {
+  useConversationStatus,
+  useConversationStatusRealtime,
+} from '@/hooks/useConversationStatus';
 import { useAtendimentos } from '@/hooks/useAtendimentos';
 import { useAtendenteAtivo } from '@/context/AtendenteAtivoContext';
-import { getActiveConfig, getWebhookUrl } from '@/config/env';
+import { supabase } from '@/integrations/supabase/client';
+import { getChatDetails } from '@/services/uazapi';
 import { setActiveChat } from '@/lib/activeChat';
+import {
+  categoriaDoGrupo,
+  grupoSomenteLeitura,
+  timerMensagensTemporarias,
+} from '@/lib/grupos';
 import {
   ChatViewMode,
   Conversation,
   ConversationAssignmentFilter,
   ConversationStatusFilter,
 } from '@/types/chat';
+import { formatMessageTime } from '@/utils/chatUtils';
+import { rotuloPreviaMidia } from '@/lib/media';
 
 const ChatsDashboard = () => {
+  const queryClient = useQueryClient();
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<Record<string, boolean>>({});
   const [selectedPhoneNumber, setSelectedPhoneNumber] = useState('');
@@ -31,16 +44,34 @@ const ChatsDashboard = () => {
   const [messageSearchTerm, setMessageSearchTerm] = useState('');
   const [conversationSearchTerm, setConversationSearchTerm] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(false);
   const [showOnlyPaused, setShowOnlyPaused] = useState(false);
   const [showOnlyUnanswered, setShowOnlyUnanswered] = useState(false);
   const [showOnlyPendencias, setShowOnlyPendencias] = useState(false);
   const [tagFilterId, setTagFilterId] = useState<number | null>(null);
+
   const [statusFilter, setStatusFilter] = useState<ConversationStatusFilter>('todas');
   const [assignmentFilter, setAssignmentFilter] =
     useState<ConversationAssignmentFilter>('todas');
   // Avatares de grupos sem histórico (não existem no estado de conversas)
   const [groupAvatars, setGroupAvatars] = useState<Map<string, string>>(new Map());
+  // Guarda as últimas mensagens de grupos conhecidas localmente
+  const [groupLastMessages, setGroupLastMessages] = useState<
+    Map<string, { lastMessage: string; time: string; lastMessageDate: string }>
+  >(() => {
+    try {
+      const stored = localStorage.getItem('cvi-group-last-messages');
+      if (stored) {
+        return new Map(JSON.parse(stored));
+      }
+    } catch {}
+    return new Map();
+  });
+  // Oculta por padrão os grupos que a instância não faz mais parte (só
+  // aparecem pelo histórico salvo, sem mensagens novas possíveis)
+  const [showInactiveGroups, setShowInactiveGroups] = useState(false);
+
+  // Uma única assinatura mantém todos os consumidores do cache sincronizados.
+  useConversationStatusRealtime();
 
   // Pendências e tags dos clientes (para filtros e badges nas conversas)
   const { abertasPorCliente } = usePendencias();
@@ -53,12 +84,6 @@ const ChatsDashboard = () => {
   const { atendenteAtivoId, atendenteAtivo } = useAtendenteAtivo();
   const { atendimentoPorSession } = useAtendimentos();
 
-  // Ao escolher um atendente no header, o painel já entra filtrado nas
-  // conversas atribuídas a ele; sem atendente, volta a mostrar todas
-  useEffect(() => {
-    setAssignmentFilter(atendenteAtivoId !== null ? 'atribuidas' : 'todas');
-  }, [atendenteAtivoId]);
-
   // Grupos do WhatsApp via Uazapi (aba Grupos, nome real e participantes)
   const { groups, groupsByJid, loading: groupsLoading, refreshGroups } = useUazapiGroups();
 
@@ -67,8 +92,7 @@ const ChatsDashboard = () => {
   // A rota define a visão: /groups mostra todos os grupos, /chats as conversas
   const viewMode: ChatViewMode = location.pathname === '/groups' ? 'groups' : 'chats';
 
-  // Reage aos query params da URL (inclusive quando a notificação
-  // "Abrir conversa" navega com um novo ?select= já dentro da página)
+  // Reage aos query params da URL e mantém filtros limpos no início da tela
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const selectParam = params.get('select');
@@ -78,15 +102,14 @@ const ChatsDashboard = () => {
     if (selectParam) {
       setSelectedChat(selectParam);
     }
-    if (filterParam === 'paused') {
-      setShowOnlyPaused(true);
-    } else if (filterParam === 'unanswered') {
-      setShowOnlyUnanswered(true);
-    } else if (filterParam === 'pendencias') {
-      setShowOnlyPendencias(true);
-    }
-    if (searchParam) {
-      setConversationSearchTerm(searchParam);
+    setShowOnlyPaused(filterParam === 'paused');
+    setShowOnlyUnanswered(filterParam === 'unanswered');
+    setShowOnlyPendencias(filterParam === 'pendencias');
+    setConversationSearchTerm(searchParam || '');
+    if (!filterParam) {
+      setTagFilterId(null);
+      setStatusFilter('todas');
+      setAssignmentFilter('todas');
     }
   }, [location.search]);
 
@@ -126,6 +149,29 @@ const ChatsDashboard = () => {
     handleNewMessage
   } = useChatMessages(selectedChat, selectedChatPhone);
   
+  // Sincroniza a última mensagem do grupo com o estado e cache local
+  useEffect(() => {
+    if (!selectedChat || !selectedChat.includes('@g.us') || messages.length === 0) return;
+    const latest = messages[0];
+    if (!latest) return;
+    const lastMessage = latest.mediaUrl
+      ? rotuloPreviaMidia({ type: latest.type, mediaUrl: latest.mediaUrl, fileName: latest.fileName })
+      : latest.content || 'Sem mensagens recentes';
+    const timestamp = latest.timestamp ? new Date(latest.timestamp) : new Date();
+    const time = formatMessageTime(timestamp);
+
+    setGroupLastMessages(prev => {
+      const current = prev.get(selectedChat);
+      if (current?.lastMessage === lastMessage && current?.time === time) return prev;
+      const next = new Map(prev);
+      next.set(selectedChat, { lastMessage, time, lastMessageDate: timestamp.toISOString() });
+      try {
+        localStorage.setItem('cvi-group-last-messages', JSON.stringify(Array.from(next.entries())));
+      } catch {}
+      return next;
+    });
+  }, [selectedChat, messages]);
+  
   // Set up real-time listeners for new chat messages
   useRealtimeUpdates({ 
     updateConversationLastMessage, 
@@ -134,39 +180,32 @@ const ChatsDashboard = () => {
     }
   });
 
-  // Manual refresh handler (na aba Grupos também recarrega a lista da Uazapi)
+  // Atualização manual simples e direta: limpa caches e busca do servidor
   const handleRefresh = async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
     try {
+      // Invalida todos os caches do React Query (status, atendimentos, pendências)
+      queryClient.invalidateQueries();
+
       if (viewMode === 'groups') {
         await Promise.all([
           fetchConversations(),
           refreshGroups().catch((err) => {
             console.error('Erro ao atualizar grupos via Uazapi:', err);
-            toast.error('Erro ao atualizar grupos', {
-              description: 'Não foi possível consultar a Uazapi. Tente novamente.',
-            });
           }),
         ]);
       } else {
         await fetchConversations();
       }
+      toast.success('Conversas e dados atualizados!');
+    } catch (error) {
+      console.error('Erro ao atualizar conversas:', error);
+      toast.error('Erro ao atualizar conversas');
     } finally {
       setIsRefreshing(false);
     }
   };
-
-  // Auto-refresh every 30 seconds to keep conversations up to date
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = setInterval(() => {
-      fetchConversations();
-    }, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchConversations, autoRefresh]);
-
-  const handleToggleAutoRefresh = () => setAutoRefresh(prev => !prev);
 
   // Enriquece as conversas de grupo com os dados reais da Uazapi
   // (nome atual do grupo e total de participantes)
@@ -176,10 +215,14 @@ const ChatsDashboard = () => {
       if (!conv.isGroup) return conv;
       const group = groupsByJid.get(conv.sessionId);
       if (!group) return conv;
+      const name = group.name || conv.name;
       return {
         ...conv,
-        name: group.name || conv.name,
+        name,
         groupParticipants: group.participantsCount,
+        groupCategoria: categoriaDoGrupo(name),
+        groupSomenteLeitura: grupoSomenteLeitura(group),
+        groupTimerTemporario: timerMensagensTemporarias(group),
       };
     });
   }, [conversations, groupsByJid]);
@@ -193,15 +236,27 @@ const ChatsDashboard = () => {
 
     const merged: Conversation[] = groups.map(group => {
       const existing = withHistory.get(group.jid);
+      const cached = groupLastMessages.get(group.jid);
       if (existing) {
         withHistory.delete(group.jid);
-        return existing;
+        const hasExistingMsg =
+          existing.lastMessage &&
+          existing.lastMessage !== 'Sem mensagem' &&
+          existing.lastMessage !== 'Sem mensagens recentes';
+        return {
+          ...existing,
+          isGroupActive: true,
+          lastMessage: hasExistingMsg ? existing.lastMessage : (cached?.lastMessage || existing.lastMessage),
+          time: existing.time || cached?.time || '',
+          lastMessageDate: existing.lastMessageDate || (cached?.lastMessageDate ? new Date(cached.lastMessageDate) : undefined),
+        };
       }
+      const name = group.name || `Grupo WhatsApp (${group.jid.split('@')[0]})`;
       return {
         id: group.jid,
-        name: group.name || `Grupo WhatsApp (${group.jid.split('@')[0]})`,
-        lastMessage: 'Sem mensagens recentes',
-        time: '',
+        name,
+        lastMessage: cached?.lastMessage || 'Sem mensagens recentes',
+        time: cached?.time || '',
         unread: 0,
         avatar: groupAvatars.get(group.jid) || '',
         phone: group.jid,
@@ -209,11 +264,33 @@ const ChatsDashboard = () => {
         sessionId: group.jid,
         isGroup: true,
         groupParticipants: group.participantsCount,
+        isGroupActive: true,
+        lastMessageDate: cached?.lastMessageDate ? new Date(cached.lastMessageDate) : undefined,
+        groupCategoria: categoriaDoGrupo(group.name),
+        groupSomenteLeitura: grupoSomenteLeitura(group),
+        groupTimerTemporario: timerMensagensTemporarias(group),
       };
     });
 
-    // Grupos com histórico que a Uazapi não listou (ex.: instância saiu do grupo)
-    merged.push(...withHistory.values());
+    // Grupos com histórico que a Uazapi não listou (ex.: instância saiu do
+    // grupo) — sem valor para o atendimento, não recebem mensagem nova.
+    merged.push(
+      ...Array.from(withHistory.values()).map(conv => {
+        const cached = groupLastMessages.get(conv.sessionId);
+        const hasExistingMsg =
+          conv.lastMessage &&
+          conv.lastMessage !== 'Sem mensagem' &&
+          conv.lastMessage !== 'Sem mensagens recentes';
+        return {
+          ...conv,
+          isGroupActive: false,
+          lastMessage: hasExistingMsg ? conv.lastMessage : (cached?.lastMessage || conv.lastMessage),
+          time: conv.time || cached?.time || '',
+          lastMessageDate: conv.lastMessageDate || (cached?.lastMessageDate ? new Date(cached.lastMessageDate) : undefined),
+          groupCategoria: conv.groupCategoria ?? categoriaDoGrupo(conv.name),
+        };
+      })
+    );
 
     // Com mensagens recentes primeiro; sem histórico, ordem alfabética
     return merged.sort((a, b) => {
@@ -222,7 +299,7 @@ const ChatsDashboard = () => {
       if (dateA !== dateB) return dateB - dateA;
       return a.name.localeCompare(b.name);
     });
-  }, [enrichedConversations, groups, groupAvatars]);
+  }, [enrichedConversations, groups, groupAvatars, groupLastMessages]);
 
   // Find the currently selected conversation (pode ser grupo sem histórico)
   const selectedConversation =
@@ -239,26 +316,8 @@ const ChatsDashboard = () => {
     if (selectedConversation.avatar && selectedConversation.avatar.startsWith('http')) return;
     if (avatarFetchAttempted.current.has(selectedChat)) return;
 
-    const config = getActiveConfig();
-    const uazapiConfig = {
-      serverUrl: config.UAZAPI_SERVER_URL,
-      instanceToken: config.UAZAPI_INSTANCE_TOKEN,
-    };
-
-    if (uazapiConfig.serverUrl && uazapiConfig.instanceToken) {
-      avatarFetchAttempted.current.add(selectedChat);
-      fetch(`${uazapiConfig.serverUrl.replace(/\/$/, '')}/chat/details`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'token': uazapiConfig.instanceToken
-        },
-        body: JSON.stringify({
-          number: selectedConversation.phone,
-          preview: true
-        })
-      })
-      .then(res => res.json())
+    avatarFetchAttempted.current.add(selectedChat);
+    void getChatDetails(selectedConversation.phone)
       .then(data => {
         const avatarUrl = data?.image || data?.imagePreview;
         if (avatarUrl) {
@@ -268,7 +327,6 @@ const ChatsDashboard = () => {
         }
       })
       .catch(err => console.error("Error fetching avatar from UAZAPI:", err));
-    }
   }, [selectedChat, selectedConversation, updateConversationLocal]);
 
   // Helper: checks if a conversation's phone is paused in Redis
@@ -283,10 +341,20 @@ const ChatsDashboard = () => {
     return false;
   }, [pauseStatus]);
 
+  // Grupos que a instância não faz mais parte, dentro dos grupos com histórico
+  const inactiveGroupsCount = React.useMemo(
+    () => groupConversations.filter(conv => conv.isGroupActive === false).length,
+    [groupConversations]
+  );
+
   // Filter conversations based on search term, paused filter and unanswered filter
   const filteredConversations = React.useMemo(() => {
     // Aba Grupos usa a lista completa da Uazapi; os demais filtros são da aba Conversas
     let result = viewMode === 'groups' ? groupConversations : enrichedConversations;
+    if (viewMode === 'groups' && !showInactiveGroups) {
+      result = result.filter(conversation => conversation.isGroupActive !== false);
+    }
+  
     if (viewMode === 'groups' && conversationSearchTerm.trim()) {
       const term = conversationSearchTerm.toLowerCase();
       result = result.filter(conversation =>
@@ -320,21 +388,62 @@ const ChatsDashboard = () => {
           return (tagsPorCliente.get(clientId) || []).some(tag => tag.id === tagFilterId);
         });
       }
-      if (statusFilter !== 'todas') {
+            if (statusFilter !== 'todas') {
         result = result.filter(conversation =>
           (statusPorSession.get(conversation.id)?.status ?? 'aberta') === statusFilter
         );
       }
     }
     return result;
-  }, [viewMode, groupConversations, enrichedConversations, conversationSearchTerm, showOnlyPaused, showOnlyUnanswered, showOnlyPendencias, tagFilterId, statusFilter, statusPorSession, abertasPorCliente, tagsPorCliente, isConversationPaused, atendenteAtivoId, assignmentFilter, atendimentoPorSession]);
+  }, [viewMode, groupConversations, enrichedConversations, showInactiveGroups, conversationSearchTerm, showOnlyPaused, showOnlyUnanswered, showOnlyPendencias, tagFilterId,  statusFilter, statusPorSession, abertasPorCliente, tagsPorCliente, isConversationPaused, atendenteAtivoId, assignmentFilter, atendimentoPorSession]);
+
+  const filterCounts = React.useMemo(() => {
+    let unanswered = 0;
+    let paused = 0;
+    let pendencias = 0;
+        const byTag = new Map<number, number>();
+
+    // Contadores da visão de conversas (exclui grupos do WhatsApp)
+    const chatConversations = enrichedConversations.filter(conv => !conv.isGroup);
+
+    const byStatus: Record<ConversationStatusFilter, number> = {
+      todas: chatConversations.length,
+      aberta: 0,
+      fechada: 0,
+      arquivada: 0,
+    };
+
+    for (const conv of chatConversations) {
+      if (conv.lastMessageSender === 'human') unanswered++;
+      if (isConversationPaused(conv.phone)) paused++;
+
+      const clientId = conv.clientData?.id;
+      if (clientId && (abertasPorCliente.get(clientId)?.length || 0) > 0) {
+        pendencias++;
+      }
+
+      const clientTags = clientId ? tagsPorCliente.get(clientId) || [] : [];
+            for (const t of clientTags) {
+        byTag.set(t.id, (byTag.get(t.id) || 0) + 1);
+      }
+
+      const st = statusPorSession.get(conv.id)?.status ?? 'aberta';
+      if (st in byStatus) {
+        byStatus[st as keyof typeof byStatus]++;
+      }
+    }
+
+    return { unanswered, paused, pendencias, byTag, byStatus };
+  }, [enrichedConversations, isConversationPaused, abertasPorCliente, tagsPorCliente, statusPorSession]);
 
   const hasLocalConversationFilters =
     showOnlyPaused || showOnlyUnanswered || showOnlyPendencias || tagFilterId !== null ||
     statusFilter !== 'todas' ||
     (atendenteAtivoId !== null && assignmentFilter === 'atribuidas');
   const conversationCount =
-    viewMode === 'groups' || hasLocalConversationFilters
+    viewMode === 'groups'
+      ? (conversationSearchTerm.trim() ? filteredConversations.length : Math.max(filteredConversations.length))
+      : hasLocalConversationFilters
       ? filteredConversations.length
       : totalCount;
 
@@ -361,19 +470,14 @@ const ChatsDashboard = () => {
     try {
       setIsLoading(prev => ({ ...prev, [`pause-${selectedPhoneNumber}`]: true }));
       
-      const response = await fetch(getWebhookUrl('pausaBot', '/pausa_bot'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const { data, error } = await supabase.functions.invoke('atendimento-controle', {
+        body: {
+          action: 'pausar',
+          sessionId: selectedPhoneNumber,
+          durationSeconds: duration ? duration * 60 * 60 : null,
         },
-        body: JSON.stringify({ 
-          phoneNumber: selectedPhoneNumber,
-          duration,
-          unit: 'seconds'
-        }),
       });
-      
-      if (!response.ok) {
+      if (error || data?.error) {
         throw new Error('Erro ao pausar o bot');
       }
       
@@ -392,20 +496,42 @@ const ChatsDashboard = () => {
     }
   };
 
+  const blockNumber = async (phoneNumber: string) => {
+    try {
+      setIsLoading(prev => ({ ...prev, [`pause-${phoneNumber}`]: true }));
+      const { error } = await supabase.rpc('bloquear_telefone_atendimento', {
+        p_telefone: phoneNumber,
+        p_motivo: 'operadora_ou_spam',
+        p_observacao: 'Bloqueado manualmente no painel de conversas',
+      });
+      if (error) {
+        // Fallback via edge function
+        await supabase.functions.invoke('atendimento-controle', {
+          body: { action: 'bloquear', sessionId: phoneNumber },
+        });
+      }
+      toast.success("Número bloqueado permanentemente", {
+        description: `O assistente foi permanentemente desativado para ${phoneNumber}.`,
+      });
+      fetchConversations();
+    } catch (err) {
+      console.error('Erro ao bloquear número:', err);
+      toast.error("Erro ao bloquear número", { description: "Não foi possível bloquear o contato." });
+    } finally {
+      setIsLoading(prev => ({ ...prev, [`pause-${phoneNumber}`]: false }));
+      closePauseDialog();
+    }
+  };
+
   const startBot = async (phoneNumber: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
       setIsLoading(prev => ({ ...prev, [`start-${phoneNumber}`]: true }));
       
-      const response = await fetch(getWebhookUrl('iniciaBot', '/inicia_bot'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ phoneNumber }),
+      const { data, error } = await supabase.functions.invoke('atendimento-controle', {
+        body: { action: 'retomar', sessionId: phoneNumber },
       });
-      
-      if (!response.ok) {
+      if (error || data?.error) {
         throw new Error('Erro ao iniciar o bot');
       }
       
@@ -452,6 +578,8 @@ const ChatsDashboard = () => {
         isOpen={pauseDialogOpen}
         onOpenChange={setPauseDialogOpen}
         onConfirm={pauseBot}
+        onBlock={blockNumber}
+        phoneNumber={selectedPhoneNumber}
       />
 
       <div className="flex-1 overflow-hidden">
@@ -463,8 +591,8 @@ const ChatsDashboard = () => {
           openPauseDialog={openPauseDialog}
           startBot={startBot}
           loading={viewMode === 'groups' ? conversationsLoading || groupsLoading : conversationsLoading}
-          loadingMore={viewMode === 'chats' && loadingMore}
-          hasMore={viewMode === 'chats' && hasMore}
+          loadingMore={loadingMore}
+          hasMore={hasMore}
           onLoadMore={loadMoreConversations}
           messages={filteredMessages}
           handleNewMessage={handleNewMessage}
@@ -474,14 +602,13 @@ const ChatsDashboard = () => {
           onSearchConversations={handleSearchConversations}
           conversationSearchValue={conversationSearchTerm}
           conversationCount={conversationCount}
+          conversationPageSize={CONVERSATIONS_PAGE_SIZE}
           searchingConversations={viewMode === 'chats' && conversationsSearching}
           pauseStatus={pauseStatus}
           onRefresh={handleRefresh}
           onConversationUpdate={handleRefresh}
           updateConversationLocal={updateConversationLocal}
           isRefreshing={isRefreshing}
-          autoRefresh={autoRefresh}
-          onToggleAutoRefresh={handleToggleAutoRefresh}
           showOnlyPaused={showOnlyPaused}
           onTogglePausedFilter={() => setShowOnlyPaused(prev => !prev)}
           showOnlyUnanswered={showOnlyUnanswered}
@@ -489,8 +616,12 @@ const ChatsDashboard = () => {
           showOnlyPendencias={showOnlyPendencias}
           onTogglePendenciasFilter={() => setShowOnlyPendencias(prev => !prev)}
           viewMode={viewMode}
+          showInactiveGroups={showInactiveGroups}
+          onToggleInactiveGroupsFilter={() => setShowInactiveGroups(prev => !prev)}
+          inactiveGroupsCount={inactiveGroupsCount}
           tagFilterId={tagFilterId}
           onTagFilterChange={setTagFilterId}
+          filterCounts={filterCounts}
           tags={tags}
           statusFilter={statusFilter}
           onStatusFilterChange={setStatusFilter}

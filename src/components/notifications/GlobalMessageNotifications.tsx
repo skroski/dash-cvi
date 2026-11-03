@@ -5,6 +5,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { N8nChatHistory } from '@/types/chat';
 import { getActiveChat } from '@/lib/activeChat';
 import { formatPhone } from '@/lib/formatters';
+import { rotuloPreviaMidia } from '@/lib/media';
+import { stripHtmlAndFormatting } from '@/utils/formatMessage';
 import { getNotificationSettings, playNotificationChime } from '@/lib/notificationSound';
 
 interface IncomingMessageInfo {
@@ -40,11 +42,16 @@ function extractIncomingMessage(history: N8nChatHistory): IncomingMessageInfo {
 
   let preview =
     typeof parsed?.content === 'string' && parsed.content.trim()
-      ? parsed.content.trim()
+      ? stripHtmlAndFormatting(parsed.content)
       : '';
   if (!preview && parsed?.mediaUrl) {
-    preview =
-      parsed.type === 'image' ? '📷 Imagem' : parsed.type === 'audio' ? '🎵 Áudio' : '📄 Documento';
+    // Pelo tipo real: o campo `type` frequentemente traz o papel de quem falou
+    // ('human'), e aí toda foto virava "📄 Documento" na notificação.
+    preview = rotuloPreviaMidia({
+      type: parsed.type,
+      mediaUrl: parsed.mediaUrl,
+      fileName: parsed.fileName,
+    });
   }
   if (!preview) preview = 'Nova mensagem';
   if (preview.length > 120) preview = `${preview.slice(0, 117)}…`;
@@ -184,7 +191,7 @@ const GlobalMessageNotifications = () => {
                     phoneLabel ? `${title} · ${phoneLabel}` : title,
                     {
                       body: preview,
-                      tag: `vetbots-chat-${sessionId}`, // substitui o aviso anterior da mesma conversa
+                      tag: `cvi-chat-${sessionId}`, // substitui o aviso anterior da mesma conversa
                       icon: '/favicon.ico',
                     }
                   );

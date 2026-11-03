@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { MetricsPeriod, getPeriodStart, bucketKey, bucketLabels } from '@/lib/metricsPeriod';
+import { fetchAllRows } from '@/lib/fetchAllRows';
+import { Json } from '@/integrations/supabase/types';
 
 export interface HourlyVolume {
   hour: string;
@@ -45,6 +47,8 @@ export interface ChatKPIs {
   activeTodayConversations: number;
   idleClientsOver24h: number;
   idleClientsOver1h: number;
+  /** Mensagens enviadas ao cliente no período (bot + atendente), ambas gravadas como 'ai'. */
+  messagesSent: number;
 }
 
 export interface ChatMetrics {
@@ -64,6 +68,7 @@ const emptyMetrics: ChatMetrics = {
     activeTodayConversations: 0,
     idleClientsOver24h: 0,
     idleClientsOver1h: 0,
+    messagesSent: 0,
   },
   hourlyVolume: Array.from({ length: 24 }, (_, i) => ({
     hour: `${String(i).padStart(2, '0')}h`,
@@ -127,26 +132,18 @@ function getMessageType(message: any): 'human' | 'ai' | 'unknown' {
 async function fetchChatMetrics(period: MetricsPeriod): Promise<ChatMetrics> {
   const periodStart = getPeriodStart(period);
 
-  // ── Busca limitada ao período selecionado (evita varrer a tabela inteira) ──
-  const { data: allRows, error: rowsError } = await supabase
-    .from('n8n_chat_histories')
-    .select('id, session_id, message, data')
-    .gte('data', periodStart.toISOString())
-    .order('id', { ascending: true });
-
-  if (rowsError) throw rowsError;
-
-  const rows = (allRows as any[]) ?? [];
-
-  // ── Fetch client data keyed by sessionid ──
-  const { data: clientsData } = await supabase
-    .from('dados_cliente')
-    .select('sessionid, nome, telefone');
-
-  const clientMap: Record<string, { nome: string | null; telefone: string | null }> = {};
-  (clientsData ?? []).forEach((c: any) => {
-    if (c.sessionid) clientMap[c.sessionid] = { nome: c.nome, telefone: c.telefone };
-  });
+  // ── Busca limitada ao período selecionado, mas ainda paginada: um período
+  // largo (ex. 12m) facilmente passa das 1000 linhas que o PostgREST devolve
+  // por padrão, e a truncagem é silenciosa (sem erro) ──
+  const rows = await fetchAllRows<{ id: number; session_id: string; message: Json; data: string | null }>(
+    (from, to) =>
+      supabase
+        .from('n8n_chat_histories')
+        .select('id, session_id, message, data')
+        .gte('data', periodStart.toISOString())
+        .order('id', { ascending: true })
+        .range(from, to)
+  );
 
   // ── Build derived structures ──
   const hourBuckets = new Array(24).fill(0);
@@ -193,7 +190,7 @@ async function fetchChatMetrics(period: MetricsPeriod): Promise<ChatMetrics> {
   const today = new Date();
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   let activeTodayConversations = 0;
-  const idleClientsList: IdleClient[] = [];
+  const rawIdleList: Array<{ sessionId: string; lastMessageTime: Date; idleMinutes: number }> = [];
 
   for (const [sid, info] of Object.entries(sessionLastMsg)) {
     const idleMs = Date.now() - info.date.getTime();
@@ -205,21 +202,44 @@ async function fetchChatMetrics(period: MetricsPeriod): Promise<ChatMetrics> {
 
     // Clients where last message is from human (no bot reply yet) and idle
     if (info.type === 'human') {
-      const client = clientMap[sid];
-      idleClientsList.push({
+      rawIdleList.push({
         sessionId: sid,
-        name: client?.nome ?? 'Desconhecido',
-        phone: client?.telefone ?? sid,
         lastMessageTime: info.date,
         idleMinutes,
       });
     }
   }
 
-  const idleOver24h = idleClientsList.filter(c => c.idleMinutes >= 24 * 60).length;
-  const idleOver1h = idleClientsList.filter(c => c.idleMinutes >= 60).length;
+  const idleOver24h = rawIdleList.filter(c => c.idleMinutes >= 24 * 60).length;
+  const idleOver1h = rawIdleList.filter(c => c.idleMinutes >= 60).length;
 
-  idleClientsList.sort((a, b) => b.idleMinutes - a.idleMinutes);
+  rawIdleList.sort((a, b) => b.idleMinutes - a.idleMinutes);
+  const top20Idle = rawIdleList.slice(0, 20);
+
+  // Busca pontual de clientes apenas para os top 20 ociosos exibidos (economiza ~10 MB de egress)
+  const top20Sids = top20Idle.map(c => c.sessionId);
+  const clientMap: Record<string, { nome: string | null; telefone: string | null }> = {};
+  if (top20Sids.length > 0) {
+    const { data: topClients } = await supabase
+      .from('dados_cliente')
+      .select('sessionid, nome, telefone')
+      .in('sessionid', top20Sids);
+
+    (topClients || []).forEach(c => {
+      if (c.sessionid) clientMap[c.sessionid] = { nome: c.nome, telefone: c.telefone };
+    });
+  }
+
+  const idleClientsList: IdleClient[] = top20Idle.map(c => {
+    const client = clientMap[c.sessionId];
+    return {
+      sessionId: c.sessionId,
+      name: client?.nome ?? 'Desconhecido',
+      phone: client?.telefone ?? c.sessionId,
+      lastMessageTime: c.lastMessageTime,
+      idleMinutes: c.idleMinutes,
+    };
+  });
 
   // ── Bot Response Time (últimos 7 dias) ──
   const dayLabels: string[] = [];
@@ -288,6 +308,7 @@ async function fetchChatMetrics(period: MetricsPeriod): Promise<ChatMetrics> {
       activeTodayConversations,
       idleClientsOver24h: idleOver24h,
       idleClientsOver1h: idleOver1h,
+      messagesSent: botMessages,
     },
     hourlyVolume: hourBuckets.map((messages, i) => ({
       hour: `${String(i).padStart(2, '0')}h`,

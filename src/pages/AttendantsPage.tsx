@@ -161,6 +161,7 @@ const AttendantsPage = () => {
     <PageContainer>
       <PageHeader
         title="Atendentes e Departamentos"
+        dataTour="attendants-header"
         description="Gerencie a equipe, vincule conversas e acompanhe transferências de atendimento."
         actions={
           <>
@@ -188,7 +189,7 @@ const AttendantsPage = () => {
         />
       ) : (
         <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-tour="attendants-stats">
             <StatCard
               title="Atendentes ativos"
               value={atendentes.filter((a) => a.ativo).length}
@@ -219,9 +220,13 @@ const AttendantsPage = () => {
 
           {/* Visão de equipe: admin e líder. Antes das migrações de perfil,
               `setupPendente` mantém o painel visível para todo mundo, como era. */}
-          {(isGestor || setupPendente) && <EquipeStatusPanel />}
+          {(isGestor || setupPendente) && (
+            <div data-tour="attendants-status-panel">
+              <EquipeStatusPanel />
+            </div>
+          )}
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2" data-tour="attendants-departments">
             {departamentos.map((departamento) => {
               const equipe = atendentesPorDepartamento.get(departamento.id) || [];
               return (

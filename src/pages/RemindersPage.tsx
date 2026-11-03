@@ -1,24 +1,22 @@
 import { useMemo, useState } from 'react';
 import {
+  Activity,
   AlertCircle,
   BellRing,
+  Bot,
   CalendarCheck2,
   CalendarDays,
-  CheckCircle2,
-  Clock3,
-  Database,
+  Download,
+  ListChecks,
   Loader2,
   MessageSquareText,
-  Pencil,
   Plus,
-  RefreshCw,
   Send,
-  ShieldCheck,
-  Trash2,
-  Download,
+  Settings2,
+  Tags,
+  Timer,
   Upload,
-  Workflow,
-  XCircle,
+  Users,
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -30,34 +28,33 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import PageContainer from '@/components/layout/PageContainer';
 import EmptyState from '@/components/shared/EmptyState';
 import PageHeader from '@/components/shared/PageHeader';
 import StatCard from '@/components/shared/StatCard';
 import SpreadsheetImportDialog from '@/components/shared/SpreadsheetImportDialog';
+import ActivityTab from '@/components/reminders/ActivityTab';
+import AppointmentFormDialog from '@/components/reminders/AppointmentFormDialog';
+import AppointmentsTab from '@/components/reminders/AppointmentsTab';
+import MessageDetailDialog from '@/components/reminders/MessageDetailDialog';
+import MessagesTab from '@/components/reminders/MessagesTab';
 import ReminderFormDialog from '@/components/reminders/ReminderFormDialog';
-import { useReminders } from '@/hooks/useReminders';
+import ReminderSettingsDialog from '@/components/reminders/ReminderSettingsDialog';
+import RulesTab from '@/components/reminders/RulesTab';
+import ServicesTab from '@/components/reminders/ServicesTab';
+import TestSendDialog from '@/components/reminders/TestSendDialog';
+import { formatTime } from '@/components/reminders/reminderUi';
+import {
+  AppointmentPeriod,
+  MessagePeriod,
+  fetchMessageById,
+  useReminderDefaultExamples,
+  useReminders,
+} from '@/hooks/useReminders';
 import { cn } from '@/lib/utils';
 import { exportSpreadsheet } from '@/lib/spreadsheet';
 import { parseReminderSpreadsheet } from '@/lib/operationalSpreadsheets';
@@ -65,59 +62,16 @@ import {
   ReminderConfiguration,
   ReminderConfigurationInput,
   ReminderDelivery,
-  ReminderDeliveryStatus,
+  ReminderMessage,
+  ReminderService,
 } from '@/types/reminder';
-import { ReminderSpreadsheetImportRow } from '@/types/spreadsheet';
 import { toast } from 'sonner';
 
-const STATUS_META: Record<
-  ReminderDeliveryStatus,
-  { label: string; icon: typeof CheckCircle2; className: string }
-> = {
-  enviado: {
-    label: 'Enviado',
-    icon: CheckCircle2,
-    className: 'border-success/20 bg-success/10 text-success',
-  },
-  falha: {
-    label: 'Falha',
-    icon: XCircle,
-    className: 'border-destructive/20 bg-destructive/10 text-destructive',
-  },
-  pendente: {
-    label: 'Pendente',
-    icon: Clock3,
-    className: 'border-warning/20 bg-warning/10 text-warning',
-  },
-  processando: {
-    label: 'Processando',
-    icon: Loader2,
-    className: 'border-primary/20 bg-primary/10 text-primary',
-  },
-  ignorado: {
-    label: 'Ignorado',
-    icon: AlertCircle,
-    className: 'border-border bg-muted text-muted-foreground',
-  },
+type RuleFormState = {
+  open: boolean;
+  rule: ReminderConfiguration | null;
+  tab: 'geral' | 'frases' | 'ia';
 };
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  }).format(new Date(value));
-}
-
-function formatAppointment(delivery: ReminderDelivery) {
-  const date = new Intl.DateTimeFormat('pt-BR', {
-    timeZone: 'UTC',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(new Date(`${delivery.appointmentDate}T12:00:00Z`));
-
-  return delivery.appointmentTime ? `${date} às ${delivery.appointmentTime}` : date;
-}
 
 function currentMinutesInTimezone(timezone: string) {
   const parts = new Intl.DateTimeFormat('pt-BR', {
@@ -132,218 +86,134 @@ function currentMinutesInTimezone(timezone: string) {
 }
 
 function nextDispatchLabel(configurations: ReminderConfiguration[]) {
-  const candidates = configurations
+  const next = configurations
     .filter((configuration) => configuration.enabled)
     .map((configuration) => {
       const [hour, minute] = configuration.sendTime.split(':').map(Number);
       const sendMinutes = hour * 60 + minute;
       const currentMinutes = currentMinutesInTimezone(configuration.timezone);
-      const delta = (sendMinutes - currentMinutes + 1440) % 1440;
-      const dayOffset = sendMinutes >= currentMinutes ? 0 : 1;
-      return { configuration, delta, dayOffset };
+      return {
+        configuration,
+        delta: (sendMinutes - currentMinutes + 1440) % 1440,
+        today: sendMinutes > currentMinutes,
+      };
     })
-    .sort((a, b) => a.delta - b.delta);
-
-  if (candidates.length === 0) return 'Nenhum';
-  const next = candidates[0];
-  return `${next.dayOffset === 0 ? 'Hoje' : 'Amanhã'}, ${next.configuration.sendTime}`;
+    .sort((a, b) => a.delta - b.delta)[0];
+  if (!next) return null;
+  return `${next.today ? 'Hoje' : 'Amanhã'}, ${next.configuration.sendTime} (${next.configuration.name})`;
 }
 
-const DeliveryStatusBadge = ({ status }: { status: ReminderDeliveryStatus }) => {
-  const meta = STATUS_META[status];
-  const Icon = meta.icon;
-
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium',
-        meta.className
-      )}
-    >
-      <Icon
-        className={cn('h-3 w-3', status === 'processando' && 'animate-spin')}
-        aria-hidden="true"
-      />
-      {meta.label}
-    </span>
-  );
-};
+const FLOW_STEPS = [
+  {
+    icon: CalendarCheck2,
+    title: 'Agenda',
+    description: 'Atendimentos cadastrados aqui ou importados da planilha, com o serviço.',
+  },
+  {
+    icon: Users,
+    title: '1 por tutor por dia',
+    description: 'No horário da regra, cada tutor entra uma vez na fila, citando todos os pets.',
+  },
+  {
+    icon: Bot,
+    title: 'IA escreve',
+    description: 'A OpenAI reescreve uma das frases de exemplo com os dados do tutor.',
+  },
+  {
+    icon: Timer,
+    title: 'Envio espaçado',
+    description: 'Uma mensagem por vez pelo WhatsApp, com intervalo aleatório entre elas.',
+  },
+];
 
 const RemindersPage = () => {
-  const {
-    configurations,
-    deliveries,
-    loading,
-    configurationsLoading,
-    deliveriesLoading,
-    setupError,
-    createReminder,
-    updateReminder,
-    toggleReminder,
-    deleteReminder,
-    importDeliveries,
-    getAllDeliveries,
-    refreshDeliveries,
-  } = useReminders();
-  const [formOpen, setFormOpen] = useState(false);
+  const [tab, setTab] = useState('agenda');
+  const [appointmentPeriod, setAppointmentPeriod] = useState<AppointmentPeriod>('amanha');
+  const [messagePeriod, setMessagePeriod] = useState<MessagePeriod>('hoje');
+  const api = useReminders({ appointmentPeriod, messagePeriod });
+  const defaultExamples = useReminderDefaultExamples();
+
+  const [ruleForm, setRuleForm] = useState<RuleFormState>({ open: false, rule: null, tab: 'geral' });
+  const [appointmentForm, setAppointmentForm] = useState<{ open: boolean; appointment: ReminderDelivery | null }>({
+    open: false,
+    appointment: null,
+  });
   const [importOpen, setImportOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [editingReminder, setEditingReminder] = useState<ReminderConfiguration | null>(null);
-  const [reminderToDelete, setReminderToDelete] =
-    useState<ReminderConfiguration | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'todos' | ReminderDeliveryStatus>(
-    'todos'
-  );
+  const [testRule, setTestRule] = useState<ReminderConfiguration | null>(null);
+  const [ruleToDelete, setRuleToDelete] = useState<ReminderConfiguration | null>(null);
+  const [ruleToDispatch, setRuleToDispatch] = useState<ReminderConfiguration | null>(null);
+  const [appointmentToDelete, setAppointmentToDelete] = useState<ReminderDelivery | null>(null);
+  const [serviceToDelete, setServiceToDelete] = useState<ReminderService | null>(null);
+  const [confirmAutoSend, setConfirmAutoSend] = useState(false);
+  const [openMessageId, setOpenMessageId] = useState<number | null>(null);
+  const [fetchedMessage, setFetchedMessage] = useState<ReminderMessage | null>(null);
+  const [sendingId, setSendingId] = useState<number | null>(null);
 
-  const stats = useMemo(() => {
-    const todayKey = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Sao_Paulo',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const sentToday = deliveries.filter(
-      (delivery) =>
-        delivery.status === 'enviado' &&
-        delivery.sentAt &&
-        new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(delivery.sentAt)) === todayKey
-    ).length;
-    const failuresToday = deliveries.filter(
-      (delivery) =>
-        delivery.status === 'falha' &&
-        new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Sao_Paulo',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(delivery.updatedAt)) === todayKey
-    ).length;
-    const completedLastSevenDays = deliveries.filter(
-      (delivery) =>
-        ['enviado', 'falha'].includes(delivery.status) &&
-        new Date(delivery.updatedAt).getTime() >= sevenDaysAgo
-    );
-    const successLastSevenDays = completedLastSevenDays.filter(
-      (delivery) => delivery.status === 'enviado'
-    ).length;
-    const successRate =
-      completedLastSevenDays.length > 0
-        ? Math.round((successLastSevenDays / completedLastSevenDays.length) * 100)
-        : 0;
+  const clinicName = api.settings?.clinicName ?? 'Clínica Veterinária';
+  const autoSend = api.settings?.autoSend ?? false;
+  const nextDispatch = nextDispatchLabel(api.configurations);
 
-    return {
-      active: configurations.filter((configuration) => configuration.enabled).length,
-      sentToday,
-      failuresToday,
-      successRate,
-    };
-  }, [configurations, deliveries]);
+  const openMessage =
+    openMessageId === null
+      ? null
+      : api.messages.find((message) => message.id === openMessageId) ??
+        (fetchedMessage?.id === openMessageId ? fetchedMessage : null);
 
-  const filteredDeliveries = useMemo(
+  const uncategorizedServices = useMemo(
     () =>
-      statusFilter === 'todos'
-        ? deliveries
-        : deliveries.filter((delivery) => delivery.status === statusFilter),
-    [deliveries, statusFilter]
+      [...new Set(
+        api.appointments
+          .filter((appointment) => !appointment.serviceId && appointment.service?.trim())
+          .map((appointment) => appointment.service!.trim())
+      )].sort(),
+    [api.appointments]
   );
 
-  const openNewReminder = () => {
-    setEditingReminder(null);
-    setFormOpen(true);
+  const showMessage = async (messageId: number) => {
+    setOpenMessageId(messageId);
+    if (!api.messages.some((message) => message.id === messageId)) {
+      try {
+        setFetchedMessage(await fetchMessageById(messageId));
+      } catch {
+        toast.error('Não foi possível abrir a mensagem');
+        setOpenMessageId(null);
+      }
+    }
   };
 
-  const openEditReminder = (reminder: ReminderConfiguration) => {
-    setEditingReminder(reminder);
-    setFormOpen(true);
-  };
-
-  const saveReminder = (input: ReminderConfigurationInput) => {
-    const closeAfterSuccess = { onSuccess: () => setFormOpen(false) };
-    if (editingReminder) {
-      updateReminder.mutate(
-        { id: editingReminder.id, input },
-        closeAfterSuccess
-      );
+  const saveRule = (input: ReminderConfigurationInput) => {
+    const closeAfterSuccess = { onSuccess: () => setRuleForm((state) => ({ ...state, open: false })) };
+    if (ruleForm.rule) {
+      api.updateReminder.mutate({ id: ruleForm.rule.id, input }, closeAfterSuccess);
     } else {
-      createReminder.mutate(input, closeAfterSuccess);
+      api.createReminder.mutate(input, closeAfterSuccess);
     }
   };
 
   const exportReminderRows = async (template = false) => {
     setExporting(true);
     try {
-      const rows = template ? [] : await getAllDeliveries();
+      const rows = template ? [] : await api.getAllDeliveries();
       await exportSpreadsheet({
         fileName: template
           ? 'modelo-importacao-lembretes.xlsx'
           : `lembretes-${new Date().toISOString().slice(0, 10)}.xlsx`,
         sheetName: 'Lembretes',
         columns: [
-          {
-            header: 'Data Agendada',
-            width: 16,
-            kind: 'date',
-            value: (row: ReminderDelivery) => row.appointmentDate,
-          },
-          {
-            header: 'Horário',
-            width: 12,
-            kind: 'time',
-            value: (row: ReminderDelivery) => row.appointmentTime,
-          },
-          {
-            header: 'Serviços',
-            width: 24,
-            value: (row: ReminderDelivery) => row.service,
-          },
-          {
-            header: 'Descrição',
-            width: 30,
-            value: (row: ReminderDelivery) => row.description,
-          },
-          {
-            header: 'Nome Cliente',
-            width: 26,
-            value: (row: ReminderDelivery) => row.ownerName,
-          },
-          {
-            header: 'Telefone',
-            width: 23,
-            value: (row: ReminderDelivery) => row.phone,
-          },
-          {
-            header: 'E-mail',
-            width: 30,
-            value: (row: ReminderDelivery) => row.email,
-          },
-          {
-            header: 'Nome Pet',
-            width: 20,
-            value: (row: ReminderDelivery) => row.petName,
-          },
-          {
-            header: 'Porte',
-            width: 14,
-            value: (row: ReminderDelivery) => row.petSize,
-          },
-          {
-            header: 'Preço',
-            width: 14,
-            kind: 'currency',
-            value: (row: ReminderDelivery) => row.price,
-          },
+          { header: 'Data Agendada', width: 16, kind: 'date', value: (row: ReminderDelivery) => row.appointmentDate },
+          { header: 'Horário', width: 12, kind: 'time', value: (row: ReminderDelivery) => row.appointmentTime },
+          { header: 'Serviços', width: 24, value: (row: ReminderDelivery) => row.service },
+          { header: 'Nome Cliente', width: 26, value: (row: ReminderDelivery) => row.ownerName },
+          { header: 'Telefone', width: 23, value: (row: ReminderDelivery) => row.phone },
+          { header: 'Nome Pet', width: 20, value: (row: ReminderDelivery) => row.petName },
+          { header: 'Descrição', width: 30, value: (row: ReminderDelivery) => row.description },
           {
             header: 'Status',
             width: 16,
             kind: 'status',
-            value: (row: ReminderDelivery) =>
-              row.appointmentStatus ?? row.status.toLocaleUpperCase('pt-BR'),
+            value: (row: ReminderDelivery) => row.appointmentStatus ?? 'CONFIRMADO',
           },
           ...(template
             ? []
@@ -352,25 +222,16 @@ const RemindersPage = () => {
                   header: 'Status Lembrete',
                   width: 18,
                   kind: 'status' as const,
-                  value: (row: ReminderDelivery) =>
-                    row.status.toLocaleUpperCase('pt-BR'),
+                  value: (row: ReminderDelivery) => row.status.toLocaleUpperCase('pt-BR'),
                 },
-                {
-                  header: 'Enviado em',
-                  width: 20,
-                  kind: 'datetime' as const,
-                  value: (row: ReminderDelivery) => row.sentAt,
-                },
-                {
-                  header: 'Erro',
-                  width: 36,
-                  value: (row: ReminderDelivery) => row.error,
-                },
+                { header: 'Regra', width: 26, value: (row: ReminderDelivery) => row.configurationName },
+                { header: 'Enviado em', width: 20, kind: 'datetime' as const, value: (row: ReminderDelivery) => row.sentAt },
+                { header: 'Erro', width: 36, value: (row: ReminderDelivery) => row.error },
               ]),
         ],
         rows,
       });
-      toast.success(template ? 'Modelo baixado' : 'Lembretes exportados');
+      toast.success(template ? 'Modelo baixado' : 'Agenda exportada');
     } catch (error) {
       console.error('Erro ao exportar lembretes:', error);
       toast.error('Não foi possível gerar o arquivo Excel');
@@ -379,18 +240,15 @@ const RemindersPage = () => {
     }
   };
 
-  if (setupError && !loading) {
+  if (api.setupError && !api.loading) {
     return (
       <PageContainer>
-        <PageHeader
-          title="Lembretes"
-          description="Gerencie os avisos automáticos enviados antes dos agendamentos."
-        />
+        <PageHeader title="Lembretes" description="Avisos automáticos pelo WhatsApp antes dos atendimentos." />
         <Card className="shadow-sm">
           <EmptyState
             icon={<BellRing />}
             title="Módulo ainda não configurado no Supabase"
-            description="Aplique a migração supabase/migrations/20260716100000_lembretes.sql no projeto Supabase e recarregue esta página."
+            description="Aplique a migração supabase/migrations/20261013100000_lembretes_envio_supabase.sql no projeto Supabase e recarregue esta página."
           />
         </Card>
       </PageContainer>
@@ -401,14 +259,11 @@ const RemindersPage = () => {
     <PageContainer>
       <PageHeader
         title="Lembretes"
-        description="Configure os avisos do dia anterior e acompanhe os envios realizados pelo n8n."
+        dataTour="reminders-header"
+        description="Agenda, mensagens e envios automáticos pelo WhatsApp antes dos atendimentos."
         actions={
           <>
-            <Button
-              variant="outline"
-              onClick={() => setImportOpen(true)}
-              className="min-h-11 gap-1.5"
-            >
+            <Button variant="outline" onClick={() => setImportOpen(true)} className="min-h-11 gap-1.5">
               <Upload className="h-4 w-4" aria-hidden="true" />
               Importar
             </Button>
@@ -423,90 +278,72 @@ const RemindersPage = () => {
               ) : (
                 <Download className="h-4 w-4" aria-hidden="true" />
               )}
-              Exportar Excel
+              Exportar
             </Button>
-            <Button onClick={openNewReminder} className="min-h-11 gap-1.5">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setSettingsOpen(true)}
+              className="h-11 w-11"
+              aria-label="Ajustes dos lembretes"
+            >
+              <Settings2 className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button
+              onClick={() => setAppointmentForm({ open: true, appointment: null })}
+              className="min-h-11 gap-1.5"
+            >
               <Plus className="h-4 w-4" aria-hidden="true" />
-              Novo lembrete
+              Novo agendamento
             </Button>
           </>
         }
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title="Regras ativas"
-          value={stats.active}
-          icon={<BellRing />}
-          tone="success"
-          loading={loading}
-          hint={`${configurations.length} regra(s) cadastrada(s)`}
-        />
-        <StatCard
-          title="Próximo disparo"
-          value={nextDispatchLabel(configurations)}
-          icon={<Clock3 />}
-          loading={configurationsLoading}
-          hint="Horário de Brasília"
-          className="[&_[class*='text-3xl']]:text-xl"
-        />
-        <StatCard
-          title="Enviados hoje"
-          value={stats.sentToday}
-          icon={<Send />}
-          tone="success"
-          loading={deliveriesLoading}
-        />
-        <StatCard
-          title="Falhas hoje"
-          value={stats.failuresToday}
-          icon={<AlertCircle />}
-          tone={stats.failuresToday > 0 ? 'destructive' : 'default'}
-          loading={deliveriesLoading}
-          hint={`Taxa de sucesso em 7 dias: ${stats.successRate}%`}
-        />
-      </div>
-
-      <Card className="mb-6 overflow-hidden shadow-sm">
+      <Card className="mb-6 overflow-hidden shadow-sm" data-tour="reminders-flow">
         <CardContent className="p-0">
-          <div className="grid md:grid-cols-[220px_1fr]">
-            <div className="flex items-center gap-3 border-b bg-accent/45 p-5 md:border-b-0 md:border-r">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
-                <Workflow className="h-5 w-5" aria-hidden="true" />
-              </span>
-              <div>
-                <p className="font-semibold">Fluxo de amanhã</p>
-                <p className="text-xs text-muted-foreground">Supabase + n8n</p>
+          <div className="grid lg:grid-cols-[280px_1fr]">
+            <div
+              className={cn(
+                'flex flex-col justify-between gap-3 border-b p-5 lg:border-b-0 lg:border-r',
+                autoSend ? 'bg-success/5' : 'bg-muted/40'
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold">Envio automático</p>
+                  <p className={cn('text-sm font-medium', autoSend ? 'text-success' : 'text-muted-foreground')}>
+                    {autoSend ? 'Ligado' : 'Desligado'}
+                  </p>
+                </div>
+                <Switch
+                  checked={autoSend}
+                  disabled={!api.settings || api.updateSettings.isPending}
+                  onCheckedChange={(checked) =>
+                    checked ? setConfirmAutoSend(true) : api.updateSettings.mutate({ autoSend: false })
+                  }
+                  aria-label={autoSend ? 'Desligar envio automático' : 'Ligar envio automático'}
+                />
               </div>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {autoSend
+                  ? nextDispatch
+                    ? `Próximo disparo: ${nextDispatch}.`
+                    : 'Nenhuma regra ativa: nada será enviado.'
+                  : 'Nada sai sozinho. "Enviar agora", "Disparar agora" e testes continuam funcionando.'}
+              </p>
             </div>
-            <ol className="grid gap-px bg-border sm:grid-cols-3" aria-label="Como os lembretes funcionam">
-              {[
-                {
-                  icon: Database,
-                  title: '1. Consulta a regra',
-                  description: 'O n8n lê as configurações ativas e o horário de envio.',
-                },
-                {
-                  icon: CalendarCheck2,
-                  title: '2. Filtra a agenda',
-                  description: 'Seleciona somente tutores com serviço marcado para amanhã.',
-                },
-                {
-                  icon: ShieldCheck,
-                  title: '3. Envia e registra',
-                  description: 'Dispara a mensagem e salva o resultado sem duplicidade.',
-                },
-              ].map((step) => (
+            <ol className="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-4" aria-label="Como os lembretes funcionam">
+              {FLOW_STEPS.map((step, index) => (
                 <li key={step.title} className="flex gap-3 bg-card p-4">
-                  <step.icon
-                    className="mt-0.5 h-4 w-4 shrink-0 text-primary"
-                    aria-hidden="true"
-                  />
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                    <step.icon className="h-4 w-4" aria-hidden="true" />
+                  </span>
                   <div>
-                    <p className="text-sm font-medium">{step.title}</p>
-                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                      {step.description}
+                    <p className="text-sm font-medium">
+                      {index + 1}. {step.title}
                     </p>
+                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{step.description}</p>
                   </div>
                 </li>
               ))}
@@ -515,337 +352,356 @@ const RemindersPage = () => {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="rules" className="space-y-4">
-        <TabsList className="h-11 w-full justify-start overflow-x-auto sm:w-auto">
-          <TabsTrigger value="rules" className="min-h-9 gap-1.5">
-            <MessageSquareText className="h-4 w-4" aria-hidden="true" />
-            Regras e horários
-          </TabsTrigger>
-          <TabsTrigger value="history" className="min-h-9 gap-1.5">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" data-tour="reminders-stats">
+        <StatCard
+          title="Atendimentos amanhã"
+          value={api.stats.tomorrowAppointments}
+          icon={<CalendarDays />}
+          loading={api.statsLoading}
+          hint={`${api.stats.tomorrowPending} aguardando lembrete`}
+        />
+        <StatCard
+          title="Na fila agora"
+          value={api.stats.queued}
+          icon={<ListChecks />}
+          tone={api.stats.queued > 0 ? 'warning' : 'default'}
+          loading={api.statsLoading}
+          hint={api.stats.nextInQueue ? `Próximo às ${formatTime(api.stats.nextInQueue)}` : 'Fila vazia'}
+        />
+        <StatCard
+          title="Enviados hoje"
+          value={api.stats.sentToday}
+          icon={<Send />}
+          tone="success"
+          loading={api.statsLoading}
+        />
+        <StatCard
+          title="Falhas hoje"
+          value={api.stats.failedToday}
+          icon={<AlertCircle />}
+          tone={api.stats.failedToday > 0 ? 'destructive' : 'default'}
+          loading={api.statsLoading}
+          hint={api.stats.failedToday > 0 ? 'Veja na aba Mensagens e reenvie' : undefined}
+        />
+      </div>
+
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+        <TabsList className="h-11 w-full justify-start overflow-x-auto sm:w-auto" data-tour="reminders-tabs">
+          <TabsTrigger value="agenda" className="min-h-9 gap-1.5">
             <CalendarDays className="h-4 w-4" aria-hidden="true" />
-            Histórico de envios
+            Agenda
+          </TabsTrigger>
+          <TabsTrigger value="mensagens" className="min-h-9 gap-1.5">
+            <MessageSquareText className="h-4 w-4" aria-hidden="true" />
+            Mensagens
+          </TabsTrigger>
+          <TabsTrigger value="regras" className="min-h-9 gap-1.5">
+            <BellRing className="h-4 w-4" aria-hidden="true" />
+            Regras e frases
+          </TabsTrigger>
+          <TabsTrigger value="servicos" className="min-h-9 gap-1.5">
+            <Tags className="h-4 w-4" aria-hidden="true" />
+            Serviços
+          </TabsTrigger>
+          <TabsTrigger value="atividade" className="min-h-9 gap-1.5">
+            <Activity className="h-4 w-4" aria-hidden="true" />
+            Atividade
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="rules" className="mt-0">
-          {configurationsLoading ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              {[0, 1].map((item) => (
-                <Card key={item} className="shadow-sm">
-                  <CardHeader>
-                    <Skeleton className="h-5 w-52" />
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <Skeleton className="h-16 w-full" />
-                    <Skeleton className="h-24 w-full" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : configurations.length === 0 ? (
-            <Card className="shadow-sm">
-              <EmptyState
-                icon={<BellRing />}
-                title="Nenhum lembrete configurado"
-                description="Crie a primeira regra para definir quando e como os tutores serão avisados."
-                action={
-                  <Button onClick={openNewReminder} className="min-h-11">
-                    <Plus className="h-4 w-4" aria-hidden="true" />
-                    Criar lembrete
-                  </Button>
-                }
-              />
-            </Card>
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              {configurations.map((reminder) => (
-                <Card key={reminder.id} className="shadow-sm">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <CardTitle className="text-base">{reminder.name}</CardTitle>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              'font-normal',
-                              reminder.enabled
-                                ? 'border-success/20 bg-success/10 text-success'
-                                : 'text-muted-foreground'
-                            )}
-                          >
-                            {reminder.enabled ? 'Ativo' : 'Pausado'}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Atualizado em {formatDateTime(reminder.updatedAt)}
-                        </p>
-                      </div>
-                      <Switch
-                        checked={reminder.enabled}
-                        disabled={toggleReminder.isPending}
-                        onCheckedChange={(enabled) =>
-                          toggleReminder.mutate({ id: reminder.id, enabled })
-                        }
-                        aria-label={
-                          reminder.enabled
-                            ? `Pausar ${reminder.name}`
-                            : `Ativar ${reminder.name}`
-                        }
-                      />
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <dl className="grid gap-2 rounded-md border bg-muted/30 p-3 sm:grid-cols-3">
-                      <div>
-                        <dt className="text-xs text-muted-foreground">Envio</dt>
-                        <dd className="mt-0.5 flex items-center gap-1.5 text-sm font-medium">
-                          <Clock3 className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
-                          {reminder.sendTime}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-xs text-muted-foreground">Agenda</dt>
-                        <dd className="mt-0.5 flex items-center gap-1.5 text-sm font-medium">
-                          <CalendarDays
-                            className="h-3.5 w-3.5 text-primary"
-                            aria-hidden="true"
-                          />
-                          Dia seguinte
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-xs text-muted-foreground">Fuso</dt>
-                        <dd className="mt-0.5 text-sm font-medium">Brasília</dd>
-                      </div>
-                    </dl>
-
-                    <div>
-                      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                        <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
-                        Mensagem enviada
-                      </p>
-                      <p className="line-clamp-4 whitespace-pre-wrap rounded-md border bg-card p-3 text-sm leading-6 text-muted-foreground">
-                        {reminder.messageTemplate}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        className="min-h-11 gap-1.5"
-                        onClick={() => openEditReminder(reminder)}
-                      >
-                        <Pencil className="h-4 w-4" aria-hidden="true" />
-                        Editar
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="min-h-11 gap-1.5 text-muted-foreground hover:text-destructive"
-                        onClick={() => setReminderToDelete(reminder)}
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                        Remover
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+        <TabsContent value="agenda" className="mt-0">
+          <AppointmentsTab
+            appointments={api.appointments}
+            services={api.services}
+            loading={api.appointmentsLoading}
+            period={appointmentPeriod}
+            onPeriodChange={setAppointmentPeriod}
+            onCreate={() => setAppointmentForm({ open: true, appointment: null })}
+            onEdit={(appointment) => setAppointmentForm({ open: true, appointment })}
+            onSendNow={(appointment) => {
+              setSendingId(appointment.id);
+              api.sendAppointmentNow.mutate(appointment.id, { onSettled: () => setSendingId(null) });
+            }}
+            onCancel={(appointment) => api.setAppointmentStatus.mutate({ id: appointment.id, status: 'cancelado' })}
+            onReactivate={(appointment) => api.setAppointmentStatus.mutate({ id: appointment.id, status: 'pendente' })}
+            onDelete={setAppointmentToDelete}
+            onOpenMessage={showMessage}
+            sendingId={sendingId}
+          />
         </TabsContent>
 
-        <TabsContent value="history" className="mt-0">
-          <Card className="shadow-sm">
-            <CardHeader className="gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <CardTitle className="text-base">Últimos envios</CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Até 200 registros recentes. A lista é atualizada automaticamente a cada 30
-                  segundos.
-                </p>
-              </div>
-              <div className="flex w-full gap-2 sm:w-auto">
-                <Select
-                  value={statusFilter}
-                  onValueChange={(value) =>
-                    setStatusFilter(value as 'todos' | ReminderDeliveryStatus)
-                  }
-                >
-                  <SelectTrigger className="min-h-11 flex-1 sm:w-44">
-                    <SelectValue placeholder="Filtrar status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos os status</SelectItem>
-                    {Object.entries(STATUS_META).map(([status, meta]) => (
-                      <SelectItem key={status} value={status}>
-                        {meta.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-11 w-11 shrink-0"
-                  onClick={() => refreshDeliveries()}
-                  disabled={deliveriesLoading}
-                  aria-label="Atualizar histórico de envios"
-                >
-                  <RefreshCw
-                    className={cn('h-4 w-4', deliveriesLoading && 'animate-spin')}
-                    aria-hidden="true"
-                  />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              {deliveriesLoading ? (
-                <div className="space-y-3 p-5">
-                  {[0, 1, 2, 3].map((item) => (
-                    <Skeleton key={item} className="h-12 w-full" />
-                  ))}
-                </div>
-              ) : filteredDeliveries.length === 0 ? (
-                <EmptyState
-                  icon={<Send />}
-                  title={
-                    statusFilter === 'todos'
-                      ? 'Nenhum envio registrado'
-                      : 'Nenhum envio com este status'
-                  }
-                  description={
-                    statusFilter === 'todos'
-                      ? 'Os resultados aparecerão aqui quando o n8n começar a processar os lembretes.'
-                      : 'Altere o filtro para consultar outros resultados.'
-                  }
-                  className="py-10"
-                />
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Processado em</TableHead>
-                        <TableHead>Tutor e pet</TableHead>
-                        <TableHead>Agendamento</TableHead>
-                        <TableHead>Lembrete</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Detalhes</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredDeliveries.map((delivery) => (
-                        <TableRow key={delivery.id}>
-                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                            {formatDateTime(delivery.sentAt || delivery.updatedAt)}
-                          </TableCell>
-                          <TableCell>
-                            <p className="font-medium">{delivery.ownerName}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {delivery.petName || 'Pet não informado'} ·{' '}
-                              {delivery.phone.replace('@s.whatsapp.net', '')}
-                            </p>
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap">
-                            <p className="text-sm">{formatAppointment(delivery)}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {delivery.service || 'Serviço não informado'}
-                            </p>
-                          </TableCell>
-                          <TableCell className="max-w-48">
-                            <p className="truncate text-sm" title={delivery.configurationName}>
-                              {delivery.configurationName}
-                            </p>
-                          </TableCell>
-                          <TableCell>
-                            <DeliveryStatusBadge status={delivery.status} />
-                          </TableCell>
-                          <TableCell className="max-w-64">
-                            <p className="text-xs text-muted-foreground">
-                              {delivery.attempts}{' '}
-                              {delivery.attempts === 1 ? 'tentativa' : 'tentativas'}
-                            </p>
-                            {delivery.error && (
-                              <p
-                                className="mt-0.5 line-clamp-2 text-xs text-destructive"
-                                title={delivery.error}
-                              >
-                                {delivery.error}
-                              </p>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        <TabsContent value="mensagens" className="mt-0">
+          <MessagesTab
+            messages={api.messages}
+            loading={api.messagesLoading}
+            period={messagePeriod}
+            onPeriodChange={setMessagePeriod}
+            onOpen={(message) => setOpenMessageId(message.id)}
+            onRefresh={api.refreshAll}
+          />
+        </TabsContent>
+
+        <TabsContent value="regras" className="mt-0">
+          <RulesTab
+            configurations={api.configurations}
+            services={api.services}
+            clinicName={clinicName}
+            loading={api.configurationsLoading}
+            togglePending={api.toggleReminder.isPending}
+            onCreate={() => setRuleForm({ open: true, rule: null, tab: 'geral' })}
+            onEdit={(rule, initialTab = 'geral') => setRuleForm({ open: true, rule, tab: initialTab })}
+            onToggle={(rule, enabled) => api.toggleReminder.mutate({ id: rule.id, enabled })}
+            onDispatch={setRuleToDispatch}
+            onTest={setTestRule}
+            onDelete={setRuleToDelete}
+          />
+        </TabsContent>
+
+        <TabsContent value="servicos" className="mt-0">
+          <ServicesTab
+            services={api.services}
+            configurations={api.configurations}
+            uncategorized={uncategorizedServices}
+            loading={api.servicesLoading}
+            saving={api.saveService.isPending}
+            onSave={(input) => api.saveService.mutateAsync(input).catch(() => undefined)}
+            onDelete={setServiceToDelete}
+          />
+        </TabsContent>
+
+        <TabsContent value="atividade" className="mt-0">
+          <ActivityTab
+            events={api.events}
+            messages={api.messages}
+            loading={api.eventsLoading}
+            onOpenMessage={showMessage}
+          />
         </TabsContent>
       </Tabs>
 
       <ReminderFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        reminder={editingReminder}
-        isPending={createReminder.isPending || updateReminder.isPending}
-        onSubmit={saveReminder}
+        open={ruleForm.open}
+        onOpenChange={(open) => setRuleForm((state) => ({ ...state, open }))}
+        reminder={ruleForm.rule}
+        initialTab={ruleForm.tab}
+        services={api.services}
+        defaultExamples={defaultExamples.data ?? []}
+        clinicName={clinicName}
+        isPending={api.createReminder.isPending || api.updateReminder.isPending}
+        onSubmit={saveRule}
+        previewPending={api.previewAi.isPending}
+        onPreview={(input) => api.previewAi.mutateAsync(input)}
       />
 
-      <SpreadsheetImportDialog<ReminderSpreadsheetImportRow>
+      <AppointmentFormDialog
+        open={appointmentForm.open}
+        onOpenChange={(open) => setAppointmentForm((state) => ({ ...state, open }))}
+        appointment={appointmentForm.appointment}
+        services={api.services}
+        configurations={api.configurations}
+        isPending={api.saveAppointment.isPending}
+        onSubmit={(input) =>
+          api.saveAppointment.mutate(
+            { id: appointmentForm.appointment?.id, input },
+            { onSuccess: () => setAppointmentForm((state) => ({ ...state, open: false })) }
+          )
+        }
+      />
+
+      <MessageDetailDialog
+        message={openMessage}
+        configurations={api.configurations}
+        clinicName={clinicName}
+        onOpenChange={(open) => !open && setOpenMessageId(null)}
+        onResend={(message) => api.resendMessage.mutate(message.id)}
+        onCancel={(message) => api.cancelMessage.mutate(message.id)}
+        onSendDirect={(message, text, botoesConfirmacao, clinic) =>
+          api.sendDirectWhatsApp.mutateAsync({
+            messageId: message.id,
+            phone: message.phone,
+            text,
+            botoesConfirmacao,
+            clinicName: clinic || clinicName,
+          })
+        }
+        resendPending={api.resendMessage.isPending}
+        cancelPending={api.cancelMessage.isPending}
+        sendDirectPending={api.sendDirectWhatsApp.isPending}
+      />
+
+      <ReminderSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        settings={api.settings}
+        isPending={api.updateSettings.isPending}
+        onSubmit={(input) =>
+          api.updateSettings.mutate(input, { onSuccess: () => setSettingsOpen(false) })
+        }
+      />
+
+      <TestSendDialog
+        rule={testRule}
+        defaultPhone={api.settings?.testPhone ?? null}
+        isPending={api.sendTest.isPending}
+        onOpenChange={(open) => !open && setTestRule(null)}
+        onSubmit={(phone) =>
+          testRule &&
+          api.sendTest.mutate(
+            { configurationId: testRule.id, phone },
+            { onSuccess: () => setTestRule(null) }
+          )
+        }
+      />
+
+      <SpreadsheetImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}
-        title="Importar agenda de lembretes"
-        description="Traga os registros da planilha antiga e associe todas as linhas a uma regra de lembrete."
+        title="Importar agenda"
+        description="Traga a planilha da agenda (mesmo formato da Pet com Pet). Telefones com @s.whatsapp.net são aceitos; status CONFIRMADO fica aguardando o lembrete e ENVIADO entra como já enviado. O serviço é ligado à categoria de mesmo nome."
         configurationLabel="Regra de lembrete"
-        configurations={configurations.map((configuration) => ({
+        configurations={api.configurations.map((configuration) => ({
           id: configuration.id,
           name: configuration.name,
         }))}
-        requiredColumns={[
-          'Data Agendada',
-          'Horário',
-          'Serviços',
-          'Nome Cliente',
-          'Telefone',
-          'Status',
-        ]}
+        requiredColumns={['Data Agendada', 'Nome Cliente', 'Telefone']}
         parseFile={parseReminderSpreadsheet}
-        onImport={(configurationId, rows) =>
-          importDeliveries.mutateAsync({ configurationId, rows })
-        }
+        onImport={(configurationId, rows) => api.importDeliveries.mutateAsync({ configurationId, rows })}
         onDownloadTemplate={() => exportReminderRows(true)}
       />
 
-      <AlertDialog
-        open={!!reminderToDelete}
-        onOpenChange={(open) => !open && setReminderToDelete(null)}
-      >
+      <AlertDialog open={confirmAutoSend} onOpenChange={setConfirmAutoSend}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remover este lembrete?</AlertDialogTitle>
+            <AlertDialogTitle>Ligar o envio automático?</AlertDialogTitle>
             <AlertDialogDescription>
-              A regra “{reminderToDelete?.name}” deixará de ser consultada pelo n8n. O
-              histórico de envios já realizados será preservado.
+              A partir de agora, no horário de cada regra ativa, os tutores da agenda recebem o
+              lembrete pelo WhatsApp sem ninguém precisar clicar.{' '}
+              {api.stats.tomorrowPending > 0
+                ? `Hoje isso inclui ${api.stats.tomorrowPending} atendimento(s) de amanhã.`
+                : ''}{' '}
+              Faça um "Enviar teste" antes, se ainda não fez.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Agora não</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => api.updateSettings.mutate({ autoSend: true })}
+            >
+              Ligar envio automático
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!ruleToDispatch} onOpenChange={(open) => !open && setRuleToDispatch(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disparar “{ruleToDispatch?.name}” agora?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Os tutores com atendimento{' '}
+              {ruleToDispatch?.daysInAdvance === 0
+                ? 'hoje'
+                : ruleToDispatch?.daysInAdvance === 1
+                  ? 'amanhã'
+                  : `daqui a ${ruleToDispatch?.daysInAdvance} dias`}{' '}
+              entram na fila agora, sem esperar as {ruleToDispatch?.sendTime}. As mensagens saem uma
+              a uma, com intervalo de {ruleToDispatch?.intervalMinSeconds} a{' '}
+              {ruleToDispatch?.intervalMaxSeconds} segundos. Quem já recebeu lembrete hoje não recebe
+              de novo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={api.dispatchNow.isPending}
+              onClick={() => {
+                if (!ruleToDispatch) return;
+                api.dispatchNow.mutate(ruleToDispatch.id, {
+                  onSuccess: () => {
+                    setRuleToDispatch(null);
+                    setTab('mensagens');
+                  },
+                });
+              }}
+            >
+              {api.dispatchNow.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              Disparar agora
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!ruleToDelete} onOpenChange={(open) => !open && setRuleToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover esta regra?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A regra “{ruleToDelete?.name}” deixa de enviar lembretes. Os atendimentos ligados a ela
+              ficam sem regra e o histórico de envios é preservado.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteReminder.isPending}
-              onClick={() => {
-                if (!reminderToDelete) return;
-                deleteReminder.mutate(reminderToDelete.id, {
-                  onSuccess: () => setReminderToDelete(null),
-                });
-              }}
+              disabled={api.deleteReminder.isPending}
+              onClick={() =>
+                ruleToDelete &&
+                api.deleteReminder.mutate(ruleToDelete.id, { onSuccess: () => setRuleToDelete(null) })
+              }
             >
-              {deleteReminder.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              )}
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!appointmentToDelete} onOpenChange={(open) => !open && setAppointmentToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir este atendimento?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O atendimento de {appointmentToDelete?.ownerName} sai da agenda. Para só não enviar o
+              lembrete, prefira “Cancelar atendimento”, que mantém o registro.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={api.deleteAppointment.isPending}
+              onClick={() =>
+                appointmentToDelete &&
+                api.deleteAppointment.mutate(appointmentToDelete.id, {
+                  onSuccess: () => setAppointmentToDelete(null),
+                })
+              }
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!serviceToDelete} onOpenChange={(open) => !open && setServiceToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover o serviço “{serviceToDelete?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Os atendimentos mantêm o nome do serviço, mas ficam sem categoria. Para só esconder o
+              serviço do cadastro, use o interruptor ao lado dele.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={api.deleteService.isPending}
+              onClick={() =>
+                serviceToDelete &&
+                api.deleteService.mutate(serviceToDelete.id, { onSuccess: () => setServiceToDelete(null) })
+              }
+            >
               Remover
             </AlertDialogAction>
           </AlertDialogFooter>

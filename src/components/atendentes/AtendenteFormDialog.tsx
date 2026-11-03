@@ -103,7 +103,7 @@ const AtendenteFormDialog = ({ open, onOpenChange, atendente }: AtendenteFormDia
               id="atendente-cargo"
               value={cargo}
               onChange={(e) => setCargo(e.target.value)}
-              placeholder="Ex.: Banhista, Veterinário..."
+              placeholder="Ex.: Atendente, Veterinário..."
             />
             <div className="flex flex-wrap gap-1.5 pt-0.5">
               {CARGOS_SUGERIDOS.map((sugestao) => (

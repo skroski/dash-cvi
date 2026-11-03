@@ -320,6 +320,7 @@ export type Database = {
           raca_pet: string | null
           servico: string | null
           sessionid: string | null
+          status: boolean | null
           telefone: string | null
         }
         Insert: {
@@ -335,6 +336,7 @@ export type Database = {
           raca_pet?: string | null
           servico?: string | null
           sessionid?: string | null
+          status?: boolean | null
           telefone?: string | null
         }
         Update: {
@@ -350,6 +352,7 @@ export type Database = {
           raca_pet?: string | null
           servico?: string | null
           sessionid?: string | null
+          status?: boolean | null
           telefone?: string | null
         }
         Relationships: []
@@ -483,117 +486,359 @@ export type Database = {
         }
         Relationships: []
       }
-      lembrete_configuracoes: {
+      lembrete_ajustes: {
         Row: {
-          ativo: boolean
-          created_at: string
-          dias_antecedencia: number
-          horario_envio: string
           id: number
-          mensagem_template: string
-          nome: string
-          timezone: string
+          envio_automatico: boolean
+          nome_clinica: string
+          telefone_teste: string | null
+          pausa_ia_minutos: number
           updated_at: string
+          updated_by: string | null
         }
         Insert: {
-          ativo?: boolean
-          created_at?: string
-          dias_antecedencia?: number
-          horario_envio?: string
           id?: number
-          mensagem_template: string
-          nome: string
-          timezone?: string
+          envio_automatico?: boolean
+          nome_clinica?: string
+          telefone_teste?: string | null
+          pausa_ia_minutos?: number
           updated_at?: string
+          updated_by?: string | null
         }
         Update: {
+          id?: number
+          envio_automatico?: boolean
+          nome_clinica?: string
+          telefone_teste?: string | null
+          pausa_ia_minutos?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      lembrete_configuracoes: {
+        Row: {
+          id: number
+          nome: string
+          ativo: boolean
+          dias_antecedencia: number
+          horario_envio: string
+          timezone: string
+          mensagem_template: string
+          created_at: string
+          updated_at: string
+          exemplos: string[]
+          usar_ia: boolean
+          modelo_ia: string
+          instrucoes_ia: string | null
+          servico_ids: number[]
+          intervalo_min_segundos: number
+          intervalo_max_segundos: number
+          janela_envio_horas: number
+          somente_confirmados: boolean
+          categoria: string
+          botoes_confirmacao: boolean
+          pausa_ia_minutos: number
+        }
+        Insert: {
+          id?: number
+          nome: string
           ativo?: boolean
-          created_at?: string
           dias_antecedencia?: number
           horario_envio?: string
-          id?: number
-          mensagem_template?: string
-          nome?: string
           timezone?: string
+          mensagem_template?: string
+          created_at?: string
           updated_at?: string
+          exemplos?: string[]
+          usar_ia?: boolean
+          modelo_ia?: string
+          instrucoes_ia?: string | null
+          servico_ids?: number[]
+          intervalo_min_segundos?: number
+          intervalo_max_segundos?: number
+          janela_envio_horas?: number
+          somente_confirmados?: boolean
+          categoria?: string
+          botoes_confirmacao?: boolean
+          pausa_ia_minutos?: number
+        }
+        Update: {
+          id?: number
+          nome?: string
+          ativo?: boolean
+          dias_antecedencia?: number
+          horario_envio?: string
+          timezone?: string
+          mensagem_template?: string
+          created_at?: string
+          updated_at?: string
+          exemplos?: string[]
+          usar_ia?: boolean
+          modelo_ia?: string
+          instrucoes_ia?: string | null
+          servico_ids?: number[]
+          intervalo_min_segundos?: number
+          intervalo_max_segundos?: number
+          janela_envio_horas?: number
+          somente_confirmados?: boolean
+          categoria?: string
+          botoes_confirmacao?: boolean
+          pausa_ia_minutos?: number
         }
         Relationships: []
       }
       lembrete_envios: {
         Row: {
-          agendamento_chave: string
+          id: number
           configuracao_id: number | null
           configuracao_nome: string
-          created_at: string
+          agendamento_chave: string
           data_agendada: string
+          horario_agendado: string | null
+          servico: string | null
+          nome_tutor: string
+          nome_pet: string | null
+          telefone: string
+          programado_para: string
+          status: string
+          tentativas: number
+          provider_message_id: string | null
+          erro: string | null
+          enviado_em: string | null
           descricao: string | null
           email: string | null
-          enviado_em: string | null
-          erro: string | null
-          horario_agendado: string | null
-          id: number
-          nome_pet: string | null
-          nome_tutor: string
           porte: string | null
           preco: number | null
-          programado_para: string
-          provider_message_id: string | null
-          servico: string | null
-          status: string
           status_agendamento: string | null
-          telefone: string
-          tentativas: number
+          created_at: string
           updated_at: string
+          servico_id: number | null
+          mensagem_id: number | null
+          servico_texto: string | null
+          origem: string
+          created_by: string | null
+          telefone_chave: string | null
         }
         Insert: {
-          agendamento_chave: string
-          configuracao_id?: number | null
-          configuracao_nome: string
-          created_at?: string
-          data_agendada: string
-          descricao?: string | null
-          email?: string | null
-          enviado_em?: string | null
-          erro?: string | null
-          horario_agendado?: string | null
           id?: number
-          nome_pet?: string | null
-          nome_tutor: string
-          porte?: string | null
-          preco?: number | null
-          programado_para: string
-          provider_message_id?: string | null
-          servico?: string | null
-          status?: string
-          status_agendamento?: string | null
-          telefone: string
-          tentativas?: number
-          updated_at?: string
-        }
-        Update: {
-          agendamento_chave?: string
           configuracao_id?: number | null
           configuracao_nome?: string
-          created_at?: string
-          data_agendada?: string
+          agendamento_chave: string
+          data_agendada: string
+          horario_agendado?: string | null
+          servico?: string | null
+          nome_tutor: string
+          nome_pet?: string | null
+          telefone: string
+          programado_para?: string
+          status?: string
+          tentativas?: number
+          provider_message_id?: string | null
+          erro?: string | null
+          enviado_em?: string | null
           descricao?: string | null
           email?: string | null
-          enviado_em?: string | null
-          erro?: string | null
-          horario_agendado?: string | null
-          id?: number
-          nome_pet?: string | null
-          nome_tutor?: string
           porte?: string | null
           preco?: number | null
-          programado_para?: string
-          provider_message_id?: string | null
-          servico?: string | null
-          status?: string
           status_agendamento?: string | null
-          telefone?: string
-          tentativas?: number
+          created_at?: string
           updated_at?: string
+          servico_id?: number | null
+          mensagem_id?: number | null
+          servico_texto?: string | null
+          origem?: string
+          created_by?: string | null
+        }
+        Update: {
+          id?: number
+          configuracao_id?: number | null
+          configuracao_nome?: string
+          agendamento_chave?: string
+          data_agendada?: string
+          horario_agendado?: string | null
+          servico?: string | null
+          nome_tutor?: string
+          nome_pet?: string | null
+          telefone?: string
+          programado_para?: string
+          status?: string
+          tentativas?: number
+          provider_message_id?: string | null
+          erro?: string | null
+          enviado_em?: string | null
+          descricao?: string | null
+          email?: string | null
+          porte?: string | null
+          preco?: number | null
+          status_agendamento?: string | null
+          created_at?: string
+          updated_at?: string
+          servico_id?: number | null
+          mensagem_id?: number | null
+          servico_texto?: string | null
+          origem?: string
+          created_by?: string | null
+        }
+        Relationships: []
+      }
+      lembrete_eventos: {
+        Row: {
+          id: number
+          mensagem_id: number | null
+          tipo: string
+          descricao: string
+          dados: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          mensagem_id?: number | null
+          tipo: string
+          descricao: string
+          dados?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          mensagem_id?: number | null
+          tipo?: string
+          descricao?: string
+          dados?: Json | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      lembrete_mensagens: {
+        Row: {
+          id: number
+          configuracao_id: number | null
+          configuracao_nome: string
+          disparo: string
+          dia_envio: string
+          telefone: string
+          telefone_chave: string
+          nome_tutor: string
+          nomes_pets: string[]
+          servicos: string[]
+          data_agendada: string
+          horario_agendado: string | null
+          programado_para: string
+          status: string
+          tentativas: number
+          texto: string | null
+          origem_texto: string | null
+          exemplo_indice: number | null
+          modelo_ia: string | null
+          provider_message_id: string | null
+          erro: string | null
+          processando_desde: string | null
+          enviado_em: string | null
+          categoria: string | null
+          botoes_confirmacao: boolean
+          pausa_ia_minutos: number | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+          servicos_texto: string[]
+        }
+        Insert: {
+          id?: number
+          configuracao_id?: number | null
+          configuracao_nome?: string
+          disparo?: string
+          dia_envio: string
+          telefone: string
+          telefone_chave: string
+          nome_tutor: string
+          nomes_pets?: string[]
+          servicos?: string[]
+          data_agendada: string
+          horario_agendado?: string | null
+          programado_para: string
+          status?: string
+          tentativas?: number
+          texto?: string | null
+          origem_texto?: string | null
+          exemplo_indice?: number | null
+          modelo_ia?: string | null
+          provider_message_id?: string | null
+          erro?: string | null
+          processando_desde?: string | null
+          enviado_em?: string | null
+          categoria?: string | null
+          botoes_confirmacao?: boolean
+          pausa_ia_minutos?: number | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+          servicos_texto?: string[]
+        }
+        Update: {
+          id?: number
+          configuracao_id?: number | null
+          configuracao_nome?: string
+          disparo?: string
+          dia_envio?: string
+          telefone?: string
+          telefone_chave?: string
+          nome_tutor?: string
+          nomes_pets?: string[]
+          servicos?: string[]
+          data_agendada?: string
+          horario_agendado?: string | null
+          programado_para?: string
+          status?: string
+          tentativas?: number
+          texto?: string | null
+          origem_texto?: string | null
+          exemplo_indice?: number | null
+          modelo_ia?: string | null
+          provider_message_id?: string | null
+          erro?: string | null
+          processando_desde?: string | null
+          enviado_em?: string | null
+          categoria?: string | null
+          botoes_confirmacao?: boolean
+          pausa_ia_minutos?: number | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+          servicos_texto?: string[]
+        }
+        Relationships: []
+      }
+      lembrete_servicos: {
+        Row: {
+          id: number
+          nome: string
+          nome_normalizado: string | null
+          cor: string
+          ativo: boolean
+          ordem: number
+          created_at: string
+          updated_at: string
+          texto_mensagem: string | null
+        }
+        Insert: {
+          id?: number
+          nome: string
+          cor?: string
+          ativo?: boolean
+          ordem?: number
+          created_at?: string
+          updated_at?: string
+          texto_mensagem?: string | null
+        }
+        Update: {
+          id?: number
+          nome?: string
+          cor?: string
+          ativo?: boolean
+          ordem?: number
+          created_at?: string
+          updated_at?: string
+          texto_mensagem?: string | null
         }
         Relationships: []
       }
@@ -1008,6 +1253,137 @@ export type Database = {
         }
         Relationships: []
       }
+      // Adicionada à mão junto com a migration 20260806100000 (ver bloco em Functions).
+      atividade_diaria: {
+        Row: {
+          created_at: string
+          data: string
+          id: number
+          primeira_atividade_em: string | null
+          segundos_ativos: number
+          ultima_atividade_em: string | null
+          updated_at: string
+          usuario_id: string
+        }
+        Insert: {
+          created_at?: string
+          data: string
+          id?: number
+          primeira_atividade_em?: string | null
+          segundos_ativos?: number
+          ultima_atividade_em?: string | null
+          updated_at?: string
+          usuario_id: string
+        }
+        Update: {
+          created_at?: string
+          data?: string
+          id?: number
+          primeira_atividade_em?: string | null
+          segundos_ativos?: number
+          ultima_atividade_em?: string | null
+          updated_at?: string
+          usuario_id?: string
+        }
+        Relationships: []
+      }
+      // Adicionada à mão junto com a migration 20260814100000.
+      conversas_status_eventos: {
+        Row: {
+          acao: string
+          ator_atendente_id: number | null
+          ator_nome: string | null
+          ator_user_id: string | null
+          created_at: string
+          de_status: string | null
+          id: number
+          ocorrido_em: string
+          session_id: string
+        }
+        Insert: {
+          acao: string
+          ator_atendente_id?: number | null
+          ator_nome?: string | null
+          ator_user_id?: string | null
+          created_at?: string
+          de_status?: string | null
+          id?: number
+          ocorrido_em?: string
+          session_id: string
+        }
+        Update: {
+          acao?: string
+          ator_atendente_id?: number | null
+          ator_nome?: string | null
+          ator_user_id?: string | null
+          created_at?: string
+          de_status?: string | null
+          id?: number
+          ocorrido_em?: string
+          session_id?: string
+        }
+        Relationships: []
+      }
+      conversa_midias: {
+        Row: {
+          arquivada_em: string | null
+          created_at: string
+          direcao: string
+          enviada_por_nome: string | null
+          enviada_por_user_id: string | null
+          id: number
+          legenda: string | null
+          message_id: string
+          mime_type: string | null
+          nome_arquivo: string | null
+          ocorrido_em: string
+          session_id: string
+          storage_path: string | null
+          tamanho_bytes: number | null
+          telefone: string | null
+          tipo: string
+          uazapi_url: string | null
+        }
+        Insert: {
+          arquivada_em?: string | null
+          created_at?: string
+          direcao: string
+          enviada_por_nome?: string | null
+          enviada_por_user_id?: string | null
+          id?: number
+          legenda?: string | null
+          message_id: string
+          mime_type?: string | null
+          nome_arquivo?: string | null
+          ocorrido_em?: string
+          session_id: string
+          storage_path?: string | null
+          tamanho_bytes?: number | null
+          telefone?: string | null
+          tipo: string
+          uazapi_url?: string | null
+        }
+        Update: {
+          arquivada_em?: string | null
+          created_at?: string
+          direcao?: string
+          enviada_por_nome?: string | null
+          enviada_por_user_id?: string | null
+          id?: number
+          legenda?: string | null
+          message_id?: string
+          mime_type?: string | null
+          nome_arquivo?: string | null
+          ocorrido_em?: string
+          session_id?: string
+          storage_path?: string | null
+          tamanho_bytes?: number | null
+          telefone?: string | null
+          tipo?: string
+          uazapi_url?: string | null
+        }
+        Relationships: []
+      }
       auditoria_eventos: {
         Row: {
           acao: string
@@ -1062,6 +1438,55 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      // Funções do módulo de lembretes (gerado por scripts/gerar-tipos.mjs).
+      lembrete_exemplos_padrao: {
+        Args: Record<PropertyKey, never>
+        Returns: string[]
+      }
+      lembretes_cancelar_mensagem: {
+        Args: { p_mensagem_id: number }
+        Returns: undefined
+      }
+      lembretes_concluir_envio_manual: {
+        Args: { p_mensagem_id: number; p_enviado: boolean; p_provider_message_id?: string; p_erro?: string }
+        Returns: undefined
+      }
+      lembretes_diagnostico: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      lembretes_disparar_agora: {
+        Args: { p_configuracao_id: number }
+        Returns: number
+      }
+      lembretes_enviar_agendamento: {
+        Args: { p_envio_id: number }
+        Returns: number
+      }
+      lembretes_enviar_teste: {
+        Args: { p_configuracao_id: number; p_telefone?: string }
+        Returns: number
+      }
+      lembretes_planejar: {
+        Args: { p_agora?: string; p_configuracao_id?: number; p_forcar?: boolean }
+        Returns: number
+      }
+      lembretes_reenviar_mensagem: {
+        Args: { p_mensagem_id: number }
+        Returns: undefined
+      }
+      lembretes_reivindicar: {
+        Args: { p_limite?: number; p_horizonte_segundos?: number }
+        Returns: Database["public"]["Tables"]["lembrete_mensagens"]["Row"][]
+      }
+      lembretes_reservar_envio_manual: {
+        Args: { p_mensagem_id: number; p_texto: string }
+        Returns: undefined
+      }
+      lembretes_tick: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
       // Adicionada à mão junto com as migrations 20260725* (ver bloco em Tables).
       definir_status_atendente: {
         Args: {
@@ -1078,6 +1503,13 @@ export type Database = {
           previsao_retorno: string | null
           status: string
         }
+      }
+      // Adicionada à mão junto com a migration 20260806100000 (ver bloco em Tables).
+      registrar_atividade: {
+        Args: {
+          p_segundos: number
+        }
+        Returns: undefined
       }
       binary_quantize: {
         Args: { "": string } | { "": unknown }
@@ -1158,13 +1590,45 @@ export type Database = {
         Returns: string
       }
       match_documents: {
-        Args: { query_embedding: string; match_count?: number; filter?: Json }
+        Args: {
+          query_embedding: string
+          match_count?: number
+          filter?: Json
+          similarity_threshold?: number
+        }
         Returns: {
           id: number
           content: string
           metadata: Json
           similarity: number
         }[]
+      }
+      listar_documentos_resumo: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          titulo: string
+          categoria: string
+          origem: string
+          drive_id: string | null
+          total_partes: number
+          total_caracteres: number
+          criado_em: string | null
+          atualizado_em: string | null
+          primeiro_id: number
+        }[]
+      }
+      obter_chunks_documento: {
+        Args: { p_titulo: string }
+        Returns: {
+          id: number
+          content: string
+          metadata: Json
+          created_at: string
+        }[]
+      }
+      obter_estatisticas_rag: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
       }
       match_documents_natacao: {
         Args: { query_embedding: string; match_count?: number; filter?: Json }

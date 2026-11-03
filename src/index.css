@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Escala da marca da fila (TV/totem). Padrão = #2294aa; a tela sobrepõe com fila_config.cor_marca. */
+:root {
+  --fila-50: 237 246 248;
+  --fila-100: 215 236 240;
+  --fila-200: 175 216 224;
+  --fila-300: 131 195 207;
+  --fila-400: 83 172 189;
+  --fila-500: 34 148 170;
+  --fila-600: 30 130 150;
+  --fila-700: 26 112 129;
+  --fila-800: 21 91 105;
+  --fila-900: 16 70 81;
+}
+
 @layer base {
   :root {
     --background: 180 14% 97%;

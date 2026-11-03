@@ -97,6 +97,9 @@ export function AppointmentsSection({
                 ...formData,
                 service: e.target.value
               })} required>
+                  <option value="Banho e Tosa">Banho e Tosa</option>
+                  <option value="Banho">Banho</option>
+                  <option value="Tosa">Tosa</option>
                   <option value="Consulta Veterinária">Consulta Veterinária</option>
                   <option value="Vacinação">Vacinação</option>
                   <option value="Exames de Rotina">Exames de Rotina</option>
@@ -188,6 +191,9 @@ export function AppointmentsSection({
                 ...formData,
                 service: e.target.value
               })} required>
+                  <option value="Banho e Tosa">Banho e Tosa</option>
+                  <option value="Banho">Banho</option>
+                  <option value="Tosa">Tosa</option>
                   <option value="Consulta Veterinária">Consulta Veterinária</option>
                   <option value="Vacinação">Vacinação</option>
                   <option value="Exames de Rotina">Exames de Rotina</option>

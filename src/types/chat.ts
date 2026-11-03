@@ -1,3 +1,4 @@
+import type { GrupoCategoria } from '@/lib/grupos';
 
 /** Aba principal da lista: conversas (tudo) ou somente grupos da Uazapi. */
 export type ChatViewMode = 'chats' | 'groups';
@@ -45,6 +46,19 @@ export interface ChatMessage {
   fileName?: string;
   /** Nome de quem enviou (mensagens recebidas em grupos). */
   senderName?: string;
+  /**
+   * Identidade da mensagem na origem: id da Uazapi, `n8n:<id da linha>` do
+   * histórico, ou o message_id do catálogo. Permite deduplicar por identidade
+   * em vez de heurística de horário — mas só entre mensagens da MESMA origem,
+   * porque os espaços de id são independentes.
+   */
+  messageId?: string;
+  /**
+   * De onde esta mensagem veio. A reconciliação de mídia depende disso: a
+   * lista da Uazapi é recarregada inteira a cada polling, então as cópias
+   * antigas dela precisam ser descartadas em vez de reconciliadas.
+   */
+  origem?: 'uazapi' | 'historico' | 'atendimento' | 'catalogo' | 'local';
 }
 
 export interface N8nChatHistory {
@@ -74,6 +88,18 @@ export interface Conversation {
   pausedSince?: Date | null; // Timestamp when bot was paused (from Redis)
   isGroup?: boolean;
   groupParticipants?: number; // Total de participantes (via Uazapi) quando é grupo
+  /**
+   * Só definido para grupos: `false` quando o grupo só existe pelo histórico
+   * salvo (a instância não é mais membro, não aparece no `/group/list` da
+   * Uazapi) — nesse caso não há como buscar mensagens novas via `/message/find`.
+   */
+  isGroupActive?: boolean;
+  /** Classificação do grupo pelo nome (ver `src/lib/grupos.ts`). */
+  groupCategoria?: GrupoCategoria;
+  /** Grupo restrito a admins e não somos admin: não dá para responder. */
+  groupSomenteLeitura?: boolean;
+  /** Mensagens temporárias em segundos (0 = desligado). */
+  groupTimerTemporario?: number;
   clientData?: {
     id: number;
     nome: string;

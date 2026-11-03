@@ -6,13 +6,17 @@ export const routeTitles: Record<string, string> = {
   '/clients': 'Clientes',
   '/attendants': 'Atendentes',
   '/users': 'Usuários e auditoria',
-  '/schedule': 'Agenda',
+  '/schedule': 'Calendário & Agenda',
+  '/calendar': 'Calendário & Agenda',
   '/reminders': 'Lembretes',
   '/satisfaction-surveys': 'Pesquisas de Satisfação',
-  '/knowledge': 'Conhecimento',
+  '/knowledge': 'Base de Conhecimento (RAG)',
   '/evolution': 'Conexão WhatsApp',
+  '/uazapi': 'Conexão WhatsApp (UAZAPI)',
   '/configuration': 'Configurações',
+  '/agenda-configuracao': 'Regras da agenda',
+  '/atendimento-configuracao': 'Configuração do atendimento',
 };
 
 export const getRouteTitle = (pathname: string): string =>
-  routeTitles[pathname] ?? 'VetBots';
+  routeTitles[pathname] ?? 'C.V.I. - Centro Veterinário Integrado';

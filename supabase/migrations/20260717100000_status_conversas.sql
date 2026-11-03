@@ -1,5 +1,5 @@
 -- Ciclo de vida das conversas: fechamento, arquivamento e reabertura.
--- Rodar no SQL Editor do Supabase (projeto napeofeenweerjhqucua).
+-- Rodar no SQL Editor do Supabase (projeto jhzxtpmlpjmufhhbdlr).
 --
 -- Uma conversa sem linha nesta tabela é considerada "aberta" (estado padrão).
 -- Fechar ou arquivar cria/atualiza a linha da sessão; reabrir volta o status

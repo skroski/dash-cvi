@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, MessageSquare, Paperclip, Mic, Square, Trash2, X, FileText, Image as ImageIcon, Play, Pause, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MessageTemplatesPopover } from './MessageTemplatesPopover';
 import {
   Tooltip,
   TooltipContent,
@@ -17,21 +17,17 @@ import {
 } from '@/components/ui/select';
 import { Conversation, ChatMessage } from '@/types/chat';
 import { toast } from 'sonner';
-import { getActiveConfig, getWebhookUrl } from '@/config/env';
 import { useAtendentes } from '@/hooks/useAtendentes';
 import { useAtendenteAtivo } from '@/context/AtendenteAtivoContext';
+import { buildChatId, sendMedia, sendText } from '@/services/uazapi';
+import { extrairMessageId, registrarMidiaEnviada, TipoMidia } from '@/services/conversaMidias';
+import { FileText, Loader2, Megaphone, MessageSquareQuote, Mic, Paperclip, Send, Square, Trash2, UploadCloud } from 'lucide-react';
 
 interface MessageInputProps {
   selectedChat: string | null;
   selectedConversation?: Conversation;
   onNewMessage?: (message: ChatMessage) => void;
 }
-
-const getWebhookMessageUrl = (_sender: 'cvi' = 'cvi') => {
-  return getWebhookUrl('mensagem', '/envia_mensagem');
-};
-
-type Sender = 'cvi';
 
 const removeAccents = (str: string) => {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -99,6 +95,203 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
 
+  // Drag & drop state
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  // Message templates (Slash commands / Modelos) states
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState('');
+  const textInputRef = useRef<HTMLInputElement>(null);
+
+  const processFile = (file: File) => {
+    // Max 15MB limit
+    if (file.size > 15 * 1024 * 1024) {
+      const tamanhoMb = (file.size / (1024 * 1024)).toFixed(1);
+      toast.error('Arquivo muito grande', {
+        description: `"${file.name}" tem ${tamanhoMb}MB e o limite é 15MB. Comprima o arquivo ou envie em partes.`,
+      });
+      return;
+    }
+
+    // Revoga preview anterior se existente
+    if (filePreview) {
+      URL.revokeObjectURL(filePreview);
+    }
+    if (audioPreviewUrl) {
+      URL.revokeObjectURL(audioPreviewUrl);
+    }
+
+    setSelectedFile(file);
+    // Clear audio if any file is uploaded
+    setAudioBlob(null);
+    setAudioPreviewUrl(null);
+
+    if (file.type.startsWith('image/')) {
+      const url = URL.createObjectURL(file);
+      setFilePreview(url);
+      setMediaName('');
+    } else {
+      setFilePreview(null);
+      // Pré-preenche o nome editável com o nome original (sem extensão)
+      const dot = file.name.lastIndexOf('.');
+      setMediaName(dot > 0 ? file.name.slice(0, dot) : file.name);
+    }
+  };
+
+  const handlePasteEvent = (clipboardData: DataTransfer | null, e?: Event | React.SyntheticEvent) => {
+    if (!clipboardData) return;
+    const items = clipboardData.items;
+
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            if (e) e.preventDefault();
+            const isGeneric = !file.name || file.name === 'image.png' || file.name === 'blob';
+            const ext = file.type.split('/')[1] || 'png';
+            const finalFile = isGeneric
+              ? new File([file], `print_${getFormattedDate()}_${Date.now().toString().slice(-4)}.${ext}`, { type: file.type || 'image/png' })
+              : file;
+            processFile(finalFile);
+            toast.info('Print/Imagem colada!', {
+              description: 'Você pode digitar uma legenda e pressionar Enter para enviar.',
+            });
+            setTimeout(() => {
+              textInputRef.current?.focus();
+            }, 50);
+            return;
+          }
+        }
+      }
+    }
+
+    const files = clipboardData.files;
+    if (files && files.length > 0) {
+      if (e) e.preventDefault();
+      processFile(files[0]);
+      toast.info('Arquivo colado!', {
+        description: 'Você pode digitar uma legenda e pressionar Enter para enviar.',
+      });
+      setTimeout(() => {
+        textInputRef.current?.focus();
+      }, 50);
+    }
+  };
+
+  // Global paste handler para facilitar a experiência do atendente (estilo WhatsApp Web)
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target !== textInputRef.current) {
+        // Se estiver digitando em outro input (ex: busca), não intercepta texto
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+          const hasFiles = Array.from(e.clipboardData?.items || []).some(
+            (item) => item.type.startsWith('image/') || item.kind === 'file'
+          );
+          if (!hasFiles) return;
+          if (target.closest('[role="dialog"]') || target.closest('[data-modal]')) return;
+        }
+      }
+
+      if (!selectedChat || !selectedConversation) return;
+      handlePasteEvent(e.clipboardData, e);
+    };
+
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => {
+      window.removeEventListener('paste', handleGlobalPaste);
+    };
+  }, [selectedChat, selectedConversation, filePreview, audioPreviewUrl]);
+
+  // Drag and Drop handlers
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      setIsDragging(false);
+      dragCounterRef.current = 0;
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    dragCounterRef.current = 0;
+
+    if (isSending || !selectedConversation) return;
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      processFile(files[0]);
+      toast.info('Arquivo anexado!', {
+        description: 'Você pode digitar uma legenda e pressionar Enter para enviar.',
+      });
+      setTimeout(() => {
+        textInputRef.current?.focus();
+      }, 50);
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setNewMessage(val);
+
+    if (val.startsWith('/')) {
+      setIsTemplatesOpen(true);
+      setSlashQuery(val.slice(1));
+    } else if (val.includes('/')) {
+      const lastSlashIdx = val.lastIndexOf('/');
+      const beforeSlash = val.slice(0, lastSlashIdx);
+      if (lastSlashIdx === 0 || beforeSlash.endsWith(' ')) {
+        setIsTemplatesOpen(true);
+        setSlashQuery(val.slice(lastSlashIdx + 1));
+      }
+    } else {
+      if (isTemplatesOpen) {
+        setIsTemplatesOpen(false);
+      }
+    }
+  };
+
+  const handleSelectTemplateText = (populatedText: string) => {
+    if (newMessage.startsWith('/')) {
+      setNewMessage(populatedText);
+    } else if (newMessage.includes('/')) {
+      const lastSlashIdx = newMessage.lastIndexOf('/');
+      const prefix = newMessage.slice(0, lastSlashIdx);
+      setNewMessage(prefix ? `${prefix}${populatedText}` : populatedText);
+    } else {
+      setNewMessage(populatedText);
+    }
+    setIsTemplatesOpen(false);
+    setSlashQuery('');
+    setTimeout(() => {
+      textInputRef.current?.focus();
+    }, 50);
+  };
+
   // Timer for audio recording
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -121,32 +314,7 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Max 15MB limit. A mensagem informa o tamanho real: laudos e exames em PDF
-    // passam disso com frequência, e sem o número ninguém liga o erro à causa.
-    if (file.size > 15 * 1024 * 1024) {
-      const tamanhoMb = (file.size / (1024 * 1024)).toFixed(1);
-      toast.error('Arquivo muito grande', {
-        description: `"${file.name}" tem ${tamanhoMb}MB e o limite é 15MB. Comprima o arquivo ou envie em partes.`,
-      });
-      return;
-    }
-
-    setSelectedFile(file);
-    // Clear audio if any file is uploaded
-    setAudioBlob(null);
-    setAudioPreviewUrl(null);
-
-    if (file.type.startsWith('image/')) {
-      const url = URL.createObjectURL(file);
-      setFilePreview(url);
-      setMediaName('');
-    } else {
-      setFilePreview(null);
-      // Pré-preenche o nome editável com o nome original (sem extensão)
-      const dot = file.name.lastIndexOf('.');
-      setMediaName(dot > 0 ? file.name.slice(0, dot) : file.name);
-    }
+    processFile(file);
   };
 
   const triggerFileInput = () => {
@@ -174,6 +342,7 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
       };
 
       // Clear files if recording starts
+      if (filePreview) URL.revokeObjectURL(filePreview);
       setSelectedFile(null);
       setFilePreview(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -201,6 +370,12 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
   };
 
   const cancelSelectedMedia = () => {
+    if (filePreview) {
+      URL.revokeObjectURL(filePreview);
+    }
+    if (audioPreviewUrl) {
+      URL.revokeObjectURL(audioPreviewUrl);
+    }
     setSelectedFile(null);
     setFilePreview(null);
     setAudioBlob(null);
@@ -244,7 +419,7 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
     });
   };
 
-  const sendMessage = async (sender: Sender) => {
+  const sendMessage = async () => {
     const hasMedia = !!selectedFile || !!audioBlob;
     if (!newMessage.trim() && !hasMedia || !selectedChat || !selectedConversation?.phone) return;
 
@@ -254,6 +429,10 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
       let mediaData = '';
       let mediaType = '';
       let fileName = '';
+      // Referência ao arquivo ORIGINAL, capturada antes de qualquer limpeza de
+      // estado: é ela (e não o base64 montado para a Uazapi) que vai para o
+      // Storage depois do envio.
+      const arquivoOriginal: File | Blob | null = selectedFile ?? audioBlob;
 
       if (selectedFile) {
         mediaData = await fileToBase64(selectedFile);
@@ -283,77 +462,40 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
         }
       }
 
-      // Get UAZAPI config
-      const config = getActiveConfig();
-      const uazapiConfig = {
-        serverUrl: config.UAZAPI_SERVER_URL,
-        instanceToken: config.UAZAPI_INSTANCE_TOKEN,
-      };
-
-      let response;
-      // Usar UAZAPI apenas quando houver mídia
-      if (hasMedia && uazapiConfig.serverUrl && uazapiConfig.instanceToken) {
-        const baseUrl = uazapiConfig.serverUrl.replace(/\/$/, '');
-        const url = `${baseUrl}/send/media`;
-
+      let providerResponse: unknown;
+      if (hasMedia) {
         const typeVal = mediaType === 'audio' ? 'ptt' : mediaType;
-        const body = JSON.stringify({
+        providerResponse = await sendMedia({
           number: selectedConversation.phone,
           type: typeVal,
-          mediatype: typeVal,
           file: mediaData,
-          media: mediaData,
           caption: finalMessage || '',
           filename: fileName,
-          fileName: fileName
-        });
-
-        response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'token': uazapiConfig.instanceToken
-          },
-          body,
-        });
-      } else if (isGroup && uazapiConfig.serverUrl && uazapiConfig.instanceToken) {
-        // Texto para grupo: envia direto pela Uazapi usando o JID do grupo
-        const baseUrl = uazapiConfig.serverUrl.replace(/\/$/, '');
-        response = await fetch(`${baseUrl}/send/text`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'token': uazapiConfig.instanceToken
-          },
-          body: JSON.stringify({
-            number: selectedConversation.phone,
-            text: finalMessage,
-          }),
         });
       } else {
-        // Enviar via Webhook (Mensagem de texto normal ou fallback)
-        const payload: any = {
-          message: finalMessage,
-          phoneNumber: selectedConversation.phone,
-        };
-
-        if (hasMedia) {
-          payload.mediaData = mediaData;
-          payload.mediaType = mediaType;
-          payload.fileName = fileName;
-        }
-
-        response = await fetch(getWebhookMessageUrl(sender), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+        providerResponse = await sendText(selectedConversation.phone, finalMessage);
       }
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('UAZAPI error response:', errorText);
-        throw new Error(`Falha ao enviar mensagem: ${errorText}`);
+      // Arquiva o anexo no Supabase (bytes no Storage + linha no catálogo).
+      // Fire-and-forget de propósito: a mensagem já foi entregue ao cliente, e
+      // uma falha de arquivamento não pode virar "erro ao enviar" na tela.
+      if (hasMedia && arquivoOriginal) {
+        // O id da mensagem, quando a Uazapi devolve, é o que amarra esta linha
+        // à mesma mídia que voltará depois no /message/find.
+        const messageId = extrairMessageId(providerResponse);
+
+        void registrarMidiaEnviada({
+          sessionId: buildChatId(selectedConversation.phone),
+          telefone: selectedConversation.phone,
+          arquivo: arquivoOriginal,
+          nomeArquivo: fileName,
+          // O CHECK da tabela não aceita string vazia, e o caminho de fallback
+          // pelo webhook pode chegar aqui sem tipo definido.
+          tipo: (mediaType || 'outro') as TipoMidia,
+          legenda: finalMessage,
+          messageId,
+          atendenteNome: selectedAtendente !== 'none' ? selectedAtendente : null,
+        });
       }
 
       // Echo otimista: mostra a mensagem imediatamente, sem esperar o realtime
@@ -381,8 +523,7 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
       if (isGroup) {
         toast.success('Mensagem enviada para o grupo', { description: 'Sua mensagem foi enviada com sucesso.' });
       } else {
-        const senderLabel = sender === 'cvi' ? 'cvi' : 'Banho & Tosa';
-        toast.success(`Mensagem enviada como ${senderLabel}`, { description: 'Sua mensagem foi enviada com sucesso.' });
+        toast.success('Mensagem enviada', { description: 'Sua mensagem foi enviada com sucesso.' });
       }
     } catch (error) {
       console.error('Error sending message:', error);
@@ -395,14 +536,20 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape' && isTemplatesOpen) {
+      setIsTemplatesOpen(false);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (isTemplatesOpen) {
+        return;
+      }
       e.preventDefault();
-      sendMessage('cvi');
+      sendMessage();
     }
   };
 
   // Mídia pendente tem botão de envio próprio no box de pré-visualização;
-  // os botões da barra (cvi / Banho & Tosa) ficam dedicados a texto
   const hasPendingMedia = !!selectedFile || !!audioBlob;
   const mediaSendLabel = audioBlob
     ? 'Enviar áudio'
@@ -412,7 +559,45 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex flex-col gap-2 border-t bg-card p-3">
+      <div
+        className={`relative flex flex-col gap-2 border-t bg-card p-3 transition-colors ${
+          isDragging ? 'ring-2 ring-primary ring-inset' : ''
+        }`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Drag & Drop Visual Overlay */}
+        {isDragging && (
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary bg-background/90 backdrop-blur-sm p-4 text-primary animate-in fade-in zoom-in-95 duration-150 pointer-events-none shadow-lg">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <UploadCloud size={28} className="animate-bounce" />
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-semibold">Solte a imagem ou arquivo aqui para anexar</p>
+              <p className="text-xs text-muted-foreground">Imagens, prints ou documentos PDF (até 15MB)</p>
+            </div>
+          </div>
+        )}
+
+        {/* Grupo restrito a admins: avisa sem bloquear. A flag vem do cache da
+            Uazapi e pode estar desatualizada — travar o envio por causa dela
+            criaria chamado de suporte; o erro real do envio ainda aparece. */}
+        {isGroup && selectedConversation?.groupSomenteLeitura && (
+          <div
+            className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning-foreground"
+            role="status"
+          >
+            <Megaphone className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+            <span>
+              <strong className="font-semibold">Grupo somente leitura.</strong> Só
+              administradores enviam mensagens aqui e este número não é admin — o envio
+              provavelmente será recusado pelo WhatsApp.
+            </span>
+          </div>
+        )}
+
         {/* Hidden File Input */}
         <input
           type="file"
@@ -501,7 +686,7 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
                   <Button
                     type="button"
                     aria-label={mediaSendLabel}
-                    onClick={() => sendMessage('cvi')}
+                    onClick={() => sendMessage()}
                     disabled={isSending || !selectedConversation}
                     className="h-9 gap-2 bg-primary px-4 text-primary-foreground hover:bg-primary/90"
                   >
@@ -539,6 +724,36 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
             </SelectContent>
           </Select>
 
+          {/* Message Templates Popover */}
+          <MessageTemplatesPopover
+            open={isTemplatesOpen}
+            onOpenChange={setIsTemplatesOpen}
+            onSelectTemplate={handleSelectTemplateText}
+            searchQuery={slashQuery}
+            conversation={selectedConversation}
+          />
+
+          {/* Message Templates Button */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                aria-label="Modelos de mensagens (/)"
+                disabled={!selectedConversation || isRecording || isSending}
+                onClick={() => setIsTemplatesOpen((prev) => !prev)}
+                className="flex-shrink-0 hover:border-primary hover:text-primary relative"
+              >
+                <MessageSquareQuote size={18} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p className="font-semibold">Modelos de mensagens</p>
+              <p className="text-xs text-muted-foreground">Digite / no teclado ou clique para abrir</p>
+            </TooltipContent>
+          </Tooltip>
+
           {/* Attachment Button */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -556,7 +771,7 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
             </TooltipTrigger>
             <TooltipContent side="top">
               <p className="font-semibold">Anexar mídia</p>
-              <p className="text-xs text-muted-foreground">Imagem, PDF (Máx 15MB)</p>
+              <p className="text-xs text-muted-foreground">Imagem, PDF (ou cole Ctrl+V / arraste)</p>
             </TooltipContent>
           </Tooltip>
 
@@ -601,28 +816,30 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
             </div>
           ) : (
             <Input
+              ref={textInputRef}
               placeholder={
                 selectedFile
                   ? 'Adicione uma legenda (opcional)...'
                   : audioBlob
                   ? 'Legenda não disponível para áudios'
-                  : 'Digite uma mensagem'
+                  : 'Digite uma mensagem (ou / para modelos)'
               }
               className="flex-1"
               value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onPaste={(e) => handlePasteEvent(e.clipboardData, e)}
               disabled={isSending || (!!audioBlob && !selectedFile)}
             />
           )}
 
-          {/* Send cvi Button */}
+          {/* Send CVI Button */}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 size="icon"
-                aria-label="Enviar texto como cvi"
+                aria-label={isGroup ? "Enviar texto para o grupo" : "Enviar mensagem"}
                 className="flex-shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
                 disabled={
                   isSending ||
@@ -631,16 +848,13 @@ const MessageInput = ({ selectedChat, selectedConversation, onNewMessage }: Mess
                   !newMessage.trim() ||
                   !selectedConversation
                 }
-                onClick={() => sendMessage('cvi')}
+                onClick={() => sendMessage()}
               >
                 <Send size={18} />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="top">
-              <p className="font-semibold">{isGroup ? 'Enviar texto para o grupo' : 'Enviar texto como cvi'}</p>
-              <p className="text-xs text-muted-foreground">
-                {isGroup ? 'Envia direto pela Uazapi no grupo' : 'Responde pelo número da cvi'}
-              </p>
+              <p className="font-semibold">{isGroup ? 'Enviar texto para o grupo' : 'Enviar mensagem'}</p>
             </TooltipContent>
           </Tooltip>
         </div>

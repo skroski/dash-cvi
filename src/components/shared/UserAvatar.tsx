@@ -32,7 +32,13 @@ const UserAvatar = ({ src, name, isGroup = false, className }: UserAvatarProps) 
 
   return (
     <Avatar className={cn('h-10 w-10', className)}>
-      {isValidUrl(src) && <AvatarImage src={src} alt={name ? `Foto de ${name}` : 'Foto do contato'} />}
+      {isValidUrl(src) && (
+        <AvatarImage
+          src={src}
+          alt={name ? `Foto de ${name}` : 'Foto do contato'}
+          referrerPolicy="no-referrer"
+        />
+      )}
       <AvatarFallback className="bg-accent text-accent-foreground text-sm font-medium">
         {initials || <FallbackIcon className="h-5 w-5" aria-hidden="true" />}
       </AvatarFallback>
