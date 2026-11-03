@@ -618,7 +618,7 @@ export default function BularioPage() {
   }, [medicamentoCalculo, simPeso, simEspecie, simRaca, calcularDose]);
 
   return (
-    <div className="flex-1 space-y-5 p-4 md:p-8 max-w-7xl mx-auto">
+    <div className="flex-1 h-full min-h-0 overflow-y-auto space-y-5 p-4 md:p-8 max-w-7xl mx-auto [scrollbar-gutter:stable]">
       {/* Topo / Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-4">
         <div>
