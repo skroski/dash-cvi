@@ -21,7 +21,7 @@ interface ReminderSettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   settings: ReminderSettings | null;
   isPending: boolean;
-  onSubmit: (input: { clinicName: string; testPhone: string | null; pausaIaMinutos?: number }) => void;
+  onSubmit: (input: { clinicName: string; testPhone: string | null; pausaIaMinutos: number }) => void;
 }
 
 const CheckItem = ({
@@ -60,23 +60,27 @@ const ReminderSettingsDialog = ({
 }: ReminderSettingsDialogProps) => {
   const [clinicName, setClinicName] = useState('');
   const [testPhone, setTestPhone] = useState('');
-  const [pausaIaMinutos, setPausaIaMinutos] = useState<number>(1.5);
+  const [pausaIaMinutos, setPausaIaMinutos] = useState('1.5');
   const diagnostics = useReminderDiagnostics(open);
 
   useEffect(() => {
     if (!open) return;
-    setClinicName(settings?.clinicName ?? 'C.V.I. - Centro Veterinário Integrado');
+    setClinicName(
+      settings?.clinicName ??
+        'C.V.I. - Centro Veterinário Integrado'
+    );
     setTestPhone(settings?.testPhone ? formatPhone(settings.testPhone) : '');
-    setPausaIaMinutos(settings?.pausaIaMinutos ?? 1.5);
+    setPausaIaMinutos(String(settings?.pausaIaMinutos ?? 1.5));
   }, [open, settings]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!clinicName.trim()) return;
+    const parsedPausa = parseFloat(pausaIaMinutos.replace(',', '.'));
     onSubmit({
-      clinicName,
+      clinicName: clinicName.trim(),
       testPhone: testPhone.trim() || null,
-      pausaIaMinutos: Number(pausaIaMinutos) || 1.5,
+      pausaIaMinutos: Number.isFinite(parsedPausa) && parsedPausa >= 0 ? parsedPausa : 1.5,
     });
   };
 
@@ -100,7 +104,7 @@ const ReminderSettingsDialog = ({
               value={clinicName}
               onChange={(event) => setClinicName(event.target.value)}
               className="min-h-11"
-              maxLength={80}
+              maxLength={250}
             />
             <p className="text-xs text-muted-foreground">Preenche a variável {'{{clinica}}'}.</p>
           </div>
@@ -118,8 +122,9 @@ const ReminderSettingsDialog = ({
               Número sugerido no botão "Enviar teste". Use um número da equipe, nunca de cliente.
             </p>
           </div>
+
           <div className="space-y-1.5">
-            <Label htmlFor="settings-pausa-ia">Pausa do bot/IA após envio interativo (minutos)</Label>
+            <Label htmlFor="settings-pausa-ia">Tempo de pausa da IA no Redis (minutos)</Label>
             <Input
               id="settings-pausa-ia"
               type="number"
@@ -127,11 +132,11 @@ const ReminderSettingsDialog = ({
               min="0"
               max="120"
               value={pausaIaMinutos}
-              onChange={(event) => setPausaIaMinutos(Number(event.target.value))}
+              onChange={(event) => setPausaIaMinutos(event.target.value)}
               className="min-h-11 tabular-nums"
             />
             <p className="text-xs text-muted-foreground">
-              Tempo em minutos em que a IA fica bloqueada no Redis para o número após receber botões de confirmação (padrão: 1.5 minutos = 90 segundos).
+              Tempo em minutos que a IA/Bot ficará pausada no Redis para o tutor após o envio de mensagens de confirmação (padrão: 1,5 minutos = 90 segundos).
             </p>
           </div>
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Bot, Eye, FlaskConical, MessageSquareText, RefreshCw, Search } from 'lucide-react';
+import { Bot, Clock3, Eye, FlaskConical, Loader2, MessageSquareText, RefreshCw, Search, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,17 +13,28 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import EmptyState from '@/components/shared/EmptyState';
-import { MessagePeriod } from '@/hooks/useReminders';
+import { MessagePeriod, todayInSaoPaulo } from '@/hooks/useReminders';
 import { cn } from '@/lib/utils';
 import { capitalizarNome, juntarLista, nomesDosPets } from '@/lib/reminderMessage';
 import { ReminderMessage, ReminderMessageStatus } from '@/types/reminder';
-import { STATUS_META, StatusBadge, TRIGGER_LABEL, formatDateBR, formatPhone, formatTime } from './reminderUi';
+import {
+  ConfirmationBadge,
+  DayBadge,
+  STATUS_META,
+  StatusBadge,
+  TRIGGER_LABEL,
+  formatDateBR,
+  formatPhone,
+  formatTime,
+} from './reminderUi';
+import StuckRemindersAlert from './StuckRemindersAlert';
 
 const PERIODS: { value: MessagePeriod; label: string }[] = [
-  { value: 'hoje', label: 'Hoje' },
+  { value: 'todos', label: 'Todas as mensagens' },
+  { value: 'hoje', label: 'Hoje (Do dia)' },
+  { value: 'pendentes', label: 'Na fila (Pendentes)' },
   { value: '7dias', label: 'Últimos 7 dias' },
   { value: '30dias', label: 'Últimos 30 dias' },
-  { value: 'todos', label: 'Todas' },
 ];
 
 interface MessagesTabProps {
@@ -33,6 +44,10 @@ interface MessagesTabProps {
   onPeriodChange: (period: MessagePeriod) => void;
   onOpen: (message: ReminderMessage) => void;
   onRefresh: () => void;
+  onProcessQueue?: () => void;
+  processQueuePending?: boolean;
+  onUnlockQueue?: (action: 'pendente' | 'enviado' | 'falha') => void;
+  unlockQueueLoading?: boolean;
 }
 
 export function SourceBadge({ message }: { message: ReminderMessage }) {
@@ -67,16 +82,35 @@ export function SourceBadge({ message }: { message: ReminderMessage }) {
   );
 }
 
-const MessagesTab = ({ messages, loading, period, onPeriodChange, onOpen, onRefresh }: MessagesTabProps) => {
+const MessagesTab = ({
+  messages,
+  loading,
+  period,
+  onPeriodChange,
+  onOpen,
+  onRefresh,
+  onProcessQueue,
+  processQueuePending = false,
+  onUnlockQueue,
+  unlockQueueLoading = false,
+}: MessagesTabProps) => {
   const [statusFilter, setStatusFilter] = useState<'todos' | ReminderMessageStatus>('todos');
   const [search, setSearch] = useState('');
+  const today = todayInSaoPaulo();
+  const tomorrow = todayInSaoPaulo(1);
+
+  const stuckCount = useMemo(
+    () => messages.filter((m) => m.status === 'processando').length,
+    [messages]
+  );
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return messages.filter((message) => {
       if (statusFilter !== 'todos' && message.status !== statusFilter) return false;
       if (!term) return true;
-      return [message.ownerName, message.phone, ...message.petNames]
+      const petNames = message.petName ? [message.petName] : message.petNames;
+      return [message.ownerName, message.phone, ...(petNames ?? [])]
         .some((value) => value.toLowerCase().includes(term));
     });
   }, [messages, statusFilter, search]);
@@ -93,20 +127,55 @@ const MessagesTab = ({ messages, loading, period, onPeriodChange, onOpen, onRefr
           <div>
             <CardTitle className="text-base">Mensagens enviadas e na fila</CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              Uma mensagem por tutor por dia. {summary.queued} na fila · {summary.sent} enviada(s) ·{' '}
-              {summary.failed} com falha. Atualiza sozinho.
+              Lembretes individuais por pet.{' '}
+              <button
+                type="button"
+                onClick={() => onPeriodChange('pendentes')}
+                className="font-medium text-warning hover:underline"
+              >
+                {summary.queued} na fila (pendentes)
+              </button>{' '}
+              · {summary.sent} enviada(s) · {summary.failed} com falha.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-11 w-11"
-            onClick={onRefresh}
-            aria-label="Atualizar mensagens"
-          >
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} aria-hidden="true" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {summary.queued > 0 && onProcessQueue && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={onProcessQueue}
+                disabled={processQueuePending}
+                className="min-h-9 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                title="Destrava e processa imediatamente os lembretes pendentes na fila"
+              >
+                {processQueuePending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+                Processar fila agora ({summary.queued})
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-11 w-11"
+              onClick={onRefresh}
+              aria-label="Atualizar mensagens"
+            >
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} aria-hidden="true" />
+            </Button>
+          </div>
         </div>
+
+        {onUnlockQueue && (
+          <StuckRemindersAlert
+            count={stuckCount}
+            onUnlock={onUnlockQueue}
+            loading={unlockQueueLoading}
+          />
+        )}
+
         <div className="grid gap-2 sm:grid-cols-[1fr_180px_180px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
@@ -147,6 +216,31 @@ const MessagesTab = ({ messages, loading, period, onPeriodChange, onOpen, onRefr
             </SelectContent>
           </Select>
         </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <span className="text-xs font-medium text-muted-foreground mr-1">Filtro rápido:</span>
+          {PERIODS.map((item) => {
+            const isSelected = period === item.value;
+            return (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => onPeriodChange(item.value)}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all',
+                  isSelected
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent hover:border-border'
+                )}
+              >
+                {item.value === 'hoje' && (
+                  <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-primary-foreground' : 'bg-emerald-500 animate-pulse')} />
+                )}
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
       </CardHeader>
 
       <CardContent className="p-0">
@@ -169,31 +263,39 @@ const MessagesTab = ({ messages, loading, period, onPeriodChange, onOpen, onRefr
           />
         ) : (
           <ul className="divide-y">
-            {filtered.map((message) => (
-              <li key={message.id}>
-                <button
-                  type="button"
-                  onClick={() => onOpen(message)}
-                  className="grid w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none md:grid-cols-[150px_220px_1fr_auto]"
-                >
-                  <div className="text-sm tabular-nums">
-                    <p className="font-medium">
-                      {message.status === 'enviado' && message.sentAt
-                        ? formatTime(message.sentAt)
-                        : formatTime(message.scheduledFor)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {message.status === 'enviado' ? 'enviado' : 'programado'} · {formatDateBR(message.sendDay)}
-                    </p>
-                  </div>
+            {filtered.map((message) => {
+              const isToday = message.sendDay === today;
+              return (
+                <li key={message.id}>
+                  <button
+                    type="button"
+                    onClick={() => onOpen(message)}
+                    className={cn(
+                      'grid w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none md:grid-cols-[165px_220px_1fr_auto]',
+                      isToday && 'bg-emerald-500/[0.04] border-l-2 border-l-emerald-500'
+                    )}
+                  >
+                    <div className="text-sm tabular-nums">
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium">
+                          {message.status === 'enviado' && message.sentAt
+                            ? formatTime(message.sentAt)
+                            : formatTime(message.scheduledFor)}
+                        </p>
+                        <DayBadge date={message.sendDay} today={today} tomorrow={tomorrow} />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {message.status === 'enviado' ? 'enviado' : 'programado'} · {formatDateBR(message.sendDay)}
+                      </p>
+                    </div>
                   <div className="min-w-0">
                     <p className="truncate font-medium">{capitalizarNome(message.ownerName)}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {juntarLista(nomesDosPets(message.petNames)) || 'Pet não informado'} ·{' '}
+                      Pet: <span className="font-medium text-foreground">{message.petName || juntarLista(nomesDosPets(message.petNames)) || 'Pet não informado'}</span> ·{' '}
                       {formatPhone(message.phone)}
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {message.services.join(', ') || 'Sem serviço'} · atendimento{' '}
+                      {message.service || message.services.join(', ') || 'Sem serviço'} · atendimento{' '}
                       {formatDateBR(message.appointmentDate)}
                     </p>
                   </div>
@@ -203,15 +305,18 @@ const MessagesTab = ({ messages, loading, period, onPeriodChange, onOpen, onRefr
                         ? 'O texto é escrito pela IA pouco antes do envio.'
                         : message.error ?? 'Sem texto.')}
                   </p>
-                    <div className="flex flex-row items-start gap-1.5 md:flex-col md:items-end">
+                  <div className="flex flex-row items-start gap-1.5 md:flex-col md:items-end">
                     <StatusBadge status={message.status} />
+                    {message.status === 'enviado' && (
+                      <ConfirmationBadge status={message.confirmationStatus} />
+                    )}
                     <div className="flex flex-wrap gap-1">
                       {message.botoesConfirmacao && (
                         <Badge
                           variant="outline"
                           className="border-emerald-600/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-normal text-[10px]"
                         >
-                          2 Botões
+                          2 botões
                         </Badge>
                       )}
                       <SourceBadge message={message} />
@@ -228,7 +333,8 @@ const MessagesTab = ({ messages, loading, period, onPeriodChange, onOpen, onRefr
                   </div>
                 </button>
               </li>
-            ))}
+            );
+          })}
           </ul>
         )}
       </CardContent>

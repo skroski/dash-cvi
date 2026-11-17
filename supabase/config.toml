@@ -35,3 +35,10 @@ verify_jwt = false
 
 [functions.atendimento-config]
 verify_jwt = false
+
+[functions.lembretes-webhook]
+verify_jwt = false
+
+[functions.copiloto-operacional]
+verify_jwt = false
+

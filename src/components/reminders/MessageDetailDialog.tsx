@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Ban, Edit3, ExternalLink, Loader2, RotateCcw, Send } from 'lucide-react';
+import {
+  Ban,
+  CalendarClock,
+  CheckCheck,
+  Edit3,
+  ExternalLink,
+  HelpCircle,
+  Loader2,
+  RotateCcw,
+  Send,
+  XCircle,
+} from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -12,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useReminderMessageEvents } from '@/hooks/useReminders';
+import { cn } from '@/lib/utils';
 import {
   capitalizarNome,
   juntarLista,
@@ -21,11 +33,19 @@ import {
 import {
   DEFAULT_REMINDER_TEMPLATE,
   ReminderConfiguration,
+  ReminderConfirmationStatus,
   ReminderMessage,
 } from '@/types/reminder';
 import { SourceBadge } from './MessagesTab';
 import { EventIcon } from './ActivityTab';
-import { StatusBadge, TRIGGER_LABEL, formatDateBR, formatDateTime, formatPhone } from './reminderUi';
+import {
+  ConfirmationBadge,
+  StatusBadge,
+  TRIGGER_LABEL,
+  formatDateBR,
+  formatDateTime,
+  formatPhone,
+} from './reminderUi';
 
 interface MessageDetailDialogProps {
   message: ReminderMessage | null;
@@ -40,43 +60,56 @@ interface MessageDetailDialogProps {
     botoesConfirmacao?: boolean,
     clinicName?: string
   ) => Promise<unknown>;
+  onMarkAsSent?: (message: ReminderMessage, text?: string) => void;
+  onUpdateConfirmation?: (messageId: number, status: ReminderConfirmationStatus) => void;
+  onUnlockMessage?: (messageId: number, action: 'pendente' | 'enviado' | 'falha') => void;
   resendPending: boolean;
   cancelPending: boolean;
   sendDirectPending?: boolean;
+  markAsSentPending?: boolean;
+  confirmationPending?: boolean;
 }
 
 const MessageDetailDialog = ({
   message: currentMessage,
   configurations = [],
-  clinicName = 'Clínica Veterinária',
+  clinicName = 'C.V.I. - Centro Veterinário Integrado',
   onOpenChange,
   onResend,
   onCancel,
   onSendDirect,
+  onMarkAsSent,
+  onUpdateConfirmation,
+  onUnlockMessage,
   resendPending,
   cancelPending,
   sendDirectPending = false,
+  markAsSentPending = false,
+  confirmationPending = false,
 }: MessageDetailDialogProps) => {
   const [lastMessage, setLastMessage] = useState(currentMessage);
   useEffect(() => {
     if (currentMessage) setLastMessage(currentMessage);
   }, [currentMessage]);
-  const message = currentMessage ?? lastMessage;
-  const events = useReminderMessageEvents(message?.id ?? null);
+  const message = currentMessage || lastMessage;
 
   const rule = useMemo(
     () => configurations.find((c) => c.id === message?.configurationId),
     [configurations, message?.configurationId]
   );
 
-  const fallbackText = useMemo(() => {
+  const initialDraft = useMemo(() => {
     if (!message) return '';
     if (message.text) return message.text;
     const template = rule?.examples?.[0] || DEFAULT_REMINDER_TEMPLATE;
+    const pet = message.petName || (message.petNames && message.petNames[0]) || '';
+    const servico = message.service || (message.services && message.services[0]) || '';
     return renderizarExemplo(template, {
       nomeTutor: message.ownerName,
-      pets: message.petNames,
-      servicos: message.services,
+      nomePet: pet,
+      servico: servico,
+      pets: pet ? [pet] : message.petNames,
+      servicos: servico ? [servico] : message.services,
       dataAgendada: message.appointmentDate,
       horario: message.appointmentTime,
       diaEnvio: message.sendDay,
@@ -84,39 +117,49 @@ const MessageDetailDialog = ({
     });
   }, [message, rule, clinicName]);
 
-  const [draftText, setDraftText] = useState(fallbackText);
+  const [draftText, setDraftText] = useState(initialDraft);
   const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
-    if (message) {
-      setDraftText(fallbackText);
-      setIsEditing(false);
-    }
-  }, [message?.id, fallbackText]);
+    setDraftText(initialDraft);
+    setIsEditing(false);
+  }, [initialDraft, currentMessage?.id]);
 
-  const canResend = message && ['falha', 'ignorado', 'cancelado'].includes(message.status);
-  const canCancel = message?.status === 'pendente';
-  const isSent = message?.status === 'enviado';
+  const events = useReminderMessageEvents(currentMessage?.id ?? null);
 
   const handleOpenWhatsAppWeb = () => {
     if (!message) return;
-    const cleanPhone = message.phone.split('@')[0].replace(/\D/g, '');
-    const fullPhone = cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
+    const digits = message.phone.replace(/\D/g, '');
+    const cleanPhone = digits.startsWith('55') ? digits : `55${digits}`;
     window.open(
-      `https://api.whatsapp.com/send?phone=${fullPhone}&text=${encodeURIComponent(draftText)}`,
-      '_blank'
+      `https://web.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(draftText)}`,
+      '_blank',
+      'noopener,noreferrer'
     );
   };
 
+  const isConsultationOrExam =
+    rule?.category === 'consulta' ||
+    rule?.category === 'vacina' ||
+    rule?.category === 'banho_tosa' ||
+    message?.category === 'consulta' ||
+    message?.category === 'vacina' ||
+    !message?.category;
+
   const hasConfirmButtons = Boolean(
-    message?.botoesConfirmacao ??
-      rule?.botoesConfirmacao ??
-      (rule?.category === 'consulta' || rule?.category === 'vacina')
+    rule?.botoesConfirmacao ||
+      message?.botoesConfirmacao ||
+      isConsultationOrExam
   );
+
+  const isSent = message?.status === 'enviado';
+  const canCancel = message?.status === 'pendente' || message?.status === 'processando';
+  const canResend = message?.status === 'falha' || message?.status === 'cancelado';
+  const canSendDirect = Boolean(onSendDirect && message && !isSent);
 
   return (
     <Dialog open={!!currentMessage} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-xl">
         {message && (
           <>
             <DialogHeader>
@@ -125,17 +168,21 @@ const MessageDetailDialog = ({
                 <StatusBadge status={message.status} />
                 {hasConfirmButtons ? (
                   <span className="rounded-md border border-emerald-600/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                    2 botões: Confirmar / Não Confirmar
+                    2 botões: Confirmar / Cancelar
                   </span>
                 ) : (
                   <span className="rounded-md border border-muted px-2 py-0.5 text-xs text-muted-foreground">
                     Sem confirmação
                   </span>
                 )}
+                {message.confirmationStatus && (
+                  <ConfirmationBadge status={message.confirmationStatus} />
+                )}
               </DialogTitle>
               <DialogDescription>
-                {formatPhone(message.phone)} · {juntarLista(nomesDosPets(message.petNames)) || 'Pet não informado'}{' '}
-                · {message.services.join(', ') || 'Sem serviço'}
+                {formatPhone(message.phone)} ·{' '}
+                {message.petName || juntarLista(nomesDosPets(message.petNames)) || 'Pet não informado'} ·{' '}
+                {message.service || message.services.join(', ') || 'Sem serviço'}
               </DialogDescription>
             </DialogHeader>
 
@@ -162,6 +209,123 @@ const MessageDetailDialog = ({
                 </dd>
               </div>
             </dl>
+
+            {message.status === 'processando' && (
+              <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-950 dark:text-amber-100">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+                  <span>Este lembrete está com status &quot;Enviando&quot;</span>
+                </div>
+                <p className="text-muted-foreground dark:text-amber-200/80">
+                  Se o disparo automático demorou ou travou na fila, você pode resolver diretamente por aqui:
+                </p>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {onUnlockMessage && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs border-amber-600/40 text-amber-800 dark:text-amber-200 hover:bg-amber-500/20"
+                      onClick={() => onUnlockMessage(message.id, 'pendente')}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                      Devolver para a fila
+                    </Button>
+                  )}
+                  {onMarkAsSent && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs border-emerald-600/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
+                      onClick={() => onMarkAsSent(message, draftText)}
+                    >
+                      <CheckCheck className="h-3.5 w-3.5 mr-1 text-emerald-600" />
+                      Marcar como enviado
+                    </Button>
+                  )}
+                  {onUnlockMessage && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => onUnlockMessage(message.id, 'falha')}
+                    >
+                      <XCircle className="h-3.5 w-3.5 mr-1" />
+                      Marcar como falha
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Painel de confirmação do tutor pós-envio */}
+            {isSent && onUpdateConfirmation && (
+              <section className="rounded-md border p-3 bg-muted/20">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Status de Confirmação do Tutor
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Atualize conforme a resposta do tutor no WhatsApp
+                    </p>
+                  </div>
+                    <div className="flex flex-wrap gap-1.5">
+                    <Button
+                      size="sm"
+                      variant={message.confirmationStatus === 'confirmado' ? 'default' : 'outline'}
+                      className={cn(
+                        'h-8 text-xs gap-1',
+                        message.confirmationStatus === 'confirmado' && 'bg-emerald-600 hover:bg-emerald-700'
+                      )}
+                      disabled={confirmationPending}
+                      onClick={() => onUpdateConfirmation(message.id, 'confirmado')}
+                    >
+                      <CheckCheck className="h-3.5 w-3.5" />
+                      Confirmado
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={message.confirmationStatus === 'cancelado' ? 'default' : 'outline'}
+                      className={cn(
+                        'h-8 text-xs gap-1',
+                        message.confirmationStatus === 'cancelado' && 'bg-destructive hover:bg-destructive/90 text-destructive-foreground'
+                      )}
+                      disabled={confirmationPending}
+                      onClick={() => onUpdateConfirmation(message.id, 'cancelado')}
+                    >
+                      <Ban className="h-3.5 w-3.5" />
+                      Cancelar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={message.confirmationStatus === 'remarcar' ? 'default' : 'outline'}
+                      className={cn(
+                        'h-8 text-xs gap-1',
+                        message.confirmationStatus === 'remarcar' && 'bg-amber-600 hover:bg-amber-700 text-white'
+                      )}
+                      disabled={confirmationPending}
+                      onClick={() => onUpdateConfirmation(message.id, 'remarcar')}
+                    >
+                      <CalendarClock className="h-3.5 w-3.5" />
+                      Remarcar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={message.confirmationStatus === 'aguardando' ? 'default' : 'outline'}
+                      className="h-8 text-xs gap-1"
+                      disabled={confirmationPending}
+                      onClick={() => onUpdateConfirmation(message.id, 'aguardando')}
+                    >
+                      <HelpCircle className="h-3.5 w-3.5" />
+                      Aguardando
+                    </Button>
+                  </div>
+                </div>
+              </section>
+            )}
 
             <section aria-label="Texto da mensagem" className="space-y-2">
               <div className="flex items-center justify-between">
@@ -202,7 +366,7 @@ const MessageDetailDialog = ({
                         ✓ Confirmar
                       </div>
                       <div className="flex items-center justify-center rounded-md border border-rose-600/30 bg-white/70 py-1.5 text-xs font-semibold text-rose-800 shadow-xs dark:bg-black/30 dark:text-rose-200">
-                        ✕ Não Confirmar
+                        ✕ Cancelar
                       </div>
                     </div>
                   )}
@@ -249,38 +413,8 @@ const MessageDetailDialog = ({
                   onClick={() => onCancel(message)}
                   disabled={cancelPending}
                 >
-                  {cancelPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Ban className="h-4 w-4" aria-hidden="true" />
-                  )}
-                  Cancelar
-                </Button>
-              )}
-
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11 gap-1.5"
-                onClick={handleOpenWhatsAppWeb}
-              >
-                <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                WhatsApp Web
-              </Button>
-
-              {onSendDirect && !isSent && (
-                <Button
-                  type="button"
-                  className="min-h-11 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-                  onClick={() => onSendDirect(message, draftText, hasConfirmButtons, clinicName)}
-                  disabled={sendDirectPending || !draftText.trim()}
-                >
-                  {sendDirectPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Send className="h-4 w-4" aria-hidden="true" />
-                  )}
-                  Enviar agora (Uazapi)
+                  <Ban className="h-4 w-4" aria-hidden="true" />
+                  Cancelar envio
                 </Button>
               )}
 
@@ -290,13 +424,56 @@ const MessageDetailDialog = ({
                   onClick={() => onResend(message)}
                   disabled={resendPending}
                 >
-                  {resendPending ? (
+                  <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                  Reenviar
+                </Button>
+              )}
+
+              {!isSent && onMarkAsSent && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 gap-1.5 border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
+                  onClick={() => onMarkAsSent(message, draftText)}
+                  disabled={markAsSentPending}
+                  title="Usa quando a mensagem já foi enviada pelo WhatsApp mas continuou Na fila"
+                >
+                  {markAsSentPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                   ) : (
-                    <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                    <CheckCheck className="h-4 w-4" aria-hidden="true" />
                   )}
-                  Tentar fila novamente
+                  Já enviei (Marcar enviado)
                 </Button>
+              )}
+
+              {canSendDirect && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 gap-1.5"
+                    onClick={handleOpenWhatsAppWeb}
+                  >
+                    <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                    Abrir no WhatsApp Web
+                  </Button>
+                  <Button
+                    type="button"
+                    className="min-h-11 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    onClick={() =>
+                      onSendDirect?.(message, draftText, hasConfirmButtons, clinicName)
+                    }
+                    disabled={sendDirectPending || !draftText.trim()}
+                  >
+                    {sendDirectPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Send className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    Enviar agora (Uazapi)
+                  </Button>
+                </>
               )}
             </DialogFooter>
           </>

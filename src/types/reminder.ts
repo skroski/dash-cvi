@@ -23,6 +23,14 @@ export type ReminderEventType =
   | 'erro_sistema'
   | 'info';
 
+export type ReminderConfirmationStatus =
+  | 'aguardando'
+  | 'confirmado'
+  | 'cancelado'
+  | 'remarcar'
+  | 'sem_resposta';
+
+
 export interface ReminderConfiguration {
   id: number;
   name: string;
@@ -100,6 +108,9 @@ export interface ReminderDelivery {
   sentAt: string | null;
   messageId: number | null;
   origin: ReminderAppointmentOrigin;
+  googleEventId?: string | null;
+  googleCalendarId?: string | null;
+  googleSyncedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -114,6 +125,7 @@ export interface ReminderAppointmentInput {
   appointmentDate: string;
   appointmentTime: string | null;
   description: string | null;
+  appointmentStatus?: string | null;
 }
 
 export interface ReminderService {
@@ -136,6 +148,15 @@ export interface ReminderMessage {
   ownerName: string;
   petNames: string[];
   services: string[];
+  /** Nome do pet único desta mensagem (migração 1 por pet) */
+  petName?: string | null;
+  /** Serviço único desta mensagem (migração 1 por pet) */
+  service?: string | null;
+  /** Status da confirmação do tutor após o envio */
+  confirmationStatus?: ReminderConfirmationStatus;
+  confirmedAt?: string | null;
+  tutorResponse?: string | null;
+  customerReply?: string | null;
   appointmentDate: string;
   appointmentTime: string | null;
   scheduledFor: string;
@@ -148,12 +169,56 @@ export interface ReminderMessage {
   providerMessageId: string | null;
   error: string | null;
   sentAt: string | null;
-  /** Envia 2 botões interativos via Uazapi: [Confirmar] e [Não Confirmar]. */
+  /** Envia 2 botões interativos via Uazapi: [Confirmar] e [Cancelar]. */
   botoesConfirmacao?: boolean;
   category?: ReminderPresetCategory;
   pausaIaMinutos?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface GoogleCalendarItem {
+  id: string;
+  nome: string;
+}
+
+export interface GoogleCalendarConfig {
+  id: number;
+  calendarId: string;
+  calendarIds?: string[];
+  agendas?: GoogleCalendarItem[];
+  ativo: boolean;
+  canalId: string | null;
+  canalExpiraEm: string | null;
+  diasRestantes?: number;
+  syncTokenConfigurado: boolean;
+  ultimoSyncEm: string | null;
+  ultimoSyncSucesso?: boolean;
+  ultimoErro: string | null;
+  sincronizarNovosEventos?: boolean;
+  configuracaoPadraoId?: number | null;
+}
+
+export interface GoogleCalendarDiagnostics {
+  sucesso: boolean;
+  serviceAccountConfigurada: boolean;
+  serviceAccountEmail: string | null;
+  authOk: boolean;
+  authErro: string | null;
+  calendarId: string;
+  calendarsDiagnostic?: Array<{
+    id: string;
+    summary?: string;
+    timeZone?: string;
+    ok: boolean;
+    erro?: string;
+  }>;
+  calendarInfo?: {
+    id: string;
+    summary: string;
+    timeZone: string;
+  } | null;
+  config: GoogleCalendarConfig;
 }
 
 export interface ReminderEvent {

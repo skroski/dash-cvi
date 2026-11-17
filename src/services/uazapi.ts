@@ -604,27 +604,32 @@ export async function sendMenuButtons(
   buttons: Array<{ id: string; text: string }>,
   footerText?: string
 ): Promise<unknown> {
+  const digits = number.split('@')[0].replace(/\D/g, '');
+  const cleanNumber = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
   const choices = buttons.map((b) => `${b.text}|${b.id}`);
+  // WhatsApp limita o footer de mensagens interativas em 60 caracteres
+  const cleanFooter = footerText?.trim() ? footerText.trim().slice(0, 60) : undefined;
+
   try {
     return await uazapiPost('/send/menu', {
-      number,
+      number: cleanNumber,
       type: 'button',
       text,
-      footerText: footerText || undefined,
+      footerText: cleanFooter,
       choices,
     });
   } catch (err) {
     try {
       return await uazapiPost('/send/menu', {
-        number,
+        number: cleanNumber,
         type: 'button_legacy',
         text,
-        footerText: footerText || undefined,
+        footerText: cleanFooter,
         choices,
       });
     } catch {
       // Fallback transparente para texto simples
-      return await sendText(number, text);
+      return await sendText(cleanNumber, text);
     }
   }
 }

@@ -9,6 +9,7 @@ import {
   ReminderAppointmentInput,
   ReminderConfiguration,
   ReminderConfigurationInput,
+  ReminderConfirmationStatus,
   ReminderDelivery,
   ReminderDeliveryStatus,
   ReminderDiagnostics,
@@ -25,6 +26,9 @@ import {
   SpreadsheetImportResult,
 } from '@/types/spreadsheet';
 import { sendMenuButtons, sendText } from '@/services/uazapi';
+import { pauseBotInRedis } from '@/services/redisPause';
+import { inferirCategoria } from '@/lib/reminderMessage';
+import type { ReminderPresetCategory } from '@/config/exampleMessagePresets';
 
 const KEYS = {
   configurations: ['reminder-configurations'],
@@ -40,8 +44,25 @@ const KEYS = {
 const MIGRATION_HINT =
   'Aplique a migração supabase/migrations/20261013100000_lembretes_envio_supabase.sql e recarregue a página.';
 
-export type AppointmentPeriod = 'amanha' | 'hoje' | 'proximos7' | 'futuros' | 'passados' | 'todos';
-export type MessagePeriod = 'hoje' | '7dias' | '30dias' | 'todos';
+export type AppointmentPeriod =
+  | 'amanha'
+  | 'segunda'
+  | 'hoje'
+  | 'personalizado'
+  | 'proximos7'
+  | 'futuros'
+  | 'passados'
+  | 'todos';
+export type MessagePeriod = 'pendentes' | 'hoje' | '7dias' | '30dias' | 'todos';
+
+export function isBloqueioOuAlmocoText(...textos: (string | null | undefined)[]): boolean {
+  for (const t of textos) {
+    if (!t) continue;
+    const n = t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (/almo[cç]o|bloquei[oa]s?/.test(n)) return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Datas no fuso de Brasília
@@ -60,12 +81,30 @@ export function todayInSaoPaulo(offsetDays = 0) {
   return date.toISOString().slice(0, 10);
 }
 
-function appointmentRange(period: AppointmentPeriod): { from?: string; to?: string } {
+/**
+ * Retorna a data (YYYY-MM-DD) da próxima segunda-feira no fuso de Brasília.
+ * Se hoje for segunda-feira, devolve a segunda-feira da próxima semana (+7 dias).
+ */
+export function proximaSegundaFeiraInSaoPaulo(): string {
+  const base = todayInSaoPaulo();
+  const date = new Date(`${base}T12:00:00Z`);
+  const diaSemana = date.getUTCDay(); // 0 = Domingo, 1 = Segunda, ..., 6 = Sábado
+  const diasAteSegunda = ((1 - diaSemana + 7) % 7) || 7;
+  return todayInSaoPaulo(diasAteSegunda);
+}
+
+function appointmentRange(period: AppointmentPeriod, customDate?: string): { from?: string; to?: string } {
   switch (period) {
     case 'hoje':
       return { from: todayInSaoPaulo(), to: todayInSaoPaulo() };
     case 'amanha':
       return { from: todayInSaoPaulo(1), to: todayInSaoPaulo(1) };
+    case 'segunda': {
+      const seg = proximaSegundaFeiraInSaoPaulo();
+      return { from: seg, to: seg };
+    }
+    case 'personalizado':
+      return customDate ? { from: customDate, to: customDate } : {};
     case 'proximos7':
       return { from: todayInSaoPaulo(), to: todayInSaoPaulo(7) };
     case 'futuros':
@@ -76,9 +115,6 @@ function appointmentRange(period: AppointmentPeriod): { from?: string; to?: stri
       return {};
   }
 }
-
-import { inferirCategoria } from '@/lib/reminderMessage';
-import type { ReminderPresetCategory } from '@/config/exampleMessagePresets';
 
 // ---------------------------------------------------------------------------
 // Mapeamento banco -> tela
@@ -117,8 +153,9 @@ function mapConfiguration(row: Tables<'lembrete_configuracoes'>): ReminderConfig
     intervalMinSeconds: row.intervalo_min_segundos,
     intervalMaxSeconds: row.intervalo_max_segundos,
     sendWindowHours: row.janela_envio_horas,
-    onlyConfirmed: row.somente_confirmados,
+    onlyConfirmed: (row as unknown as { somente_confirmados?: boolean })?.somente_confirmados ?? false,
     botoesConfirmacao: Boolean((row as unknown as { botoes_confirmacao?: boolean })?.botoes_confirmacao),
+    pausaIaMinutos: Number((row as unknown as { pausa_ia_minutos?: number })?.pausa_ia_minutos ?? 1.5),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -134,7 +171,7 @@ function mapDelivery(row: Tables<'lembrete_envios'>): ReminderDelivery {
     appointmentTime: row.horario_agendado ? normalizeReminderTime(row.horario_agendado) : null,
     service: row.servico,
     serviceId: row.servico_id,
-    serviceText: row.servico_texto,
+    serviceText: (row as unknown as { texto_servico?: string | null })?.texto_servico ?? row.servico ?? null,
     description: row.descricao,
     ownerName: row.nome_tutor,
     petName: row.nome_pet,
@@ -152,6 +189,9 @@ function mapDelivery(row: Tables<'lembrete_envios'>): ReminderDelivery {
     sentAt: row.enviado_em,
     messageId: row.mensagem_id,
     origin: row.origem as ReminderDelivery['origin'],
+    googleEventId: (row as unknown as { google_event_id?: string | null })?.google_event_id ?? null,
+    googleCalendarId: (row as unknown as { google_calendar_id?: string | null })?.google_calendar_id ?? null,
+    googleSyncedAt: (row as unknown as { google_synced_at?: string | null })?.google_synced_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -161,14 +201,16 @@ function mapService(row: Tables<'lembrete_servicos'>): ReminderService {
   return {
     id: row.id,
     name: row.nome,
-    messageText: row.texto_mensagem,
+    messageText: (row as unknown as { texto_mensagem?: string | null })?.texto_mensagem ?? row.nome ?? null,
     color: row.cor as ReminderServiceColor,
     active: row.ativo,
     order: row.ordem,
   };
 }
 
-function mapMessage(row: Tables<'lembrete_mensagens'>): ReminderMessage {
+function mapMessage(row: any): ReminderMessage {
+  const petName = row.nome_pet || (row.nomes_pets && row.nomes_pets[0]) || null;
+  const service = row.servico || (row.servicos && row.servicos[0]) || null;
   return {
     id: row.id,
     configurationId: row.configuracao_id,
@@ -177,12 +219,18 @@ function mapMessage(row: Tables<'lembrete_mensagens'>): ReminderMessage {
     sendDay: row.dia_envio,
     phone: row.telefone,
     ownerName: row.nome_tutor,
-    petNames: row.nomes_pets ?? [],
-    services: row.servicos ?? [],
+    petName,
+    service,
+    petNames: petName ? [petName] : (row.nomes_pets ?? []),
+    services: service ? [service] : (row.servicos ?? []),
     appointmentDate: row.data_agendada,
     appointmentTime: row.horario_agendado ? normalizeReminderTime(row.horario_agendado) : null,
     scheduledFor: row.programado_para,
     status: row.status as ReminderMessage['status'],
+    confirmationStatus: (row.status_confirmacao as ReminderConfirmationStatus) ?? 'aguardando',
+    confirmedAt: row.confirmado_em ?? null,
+    customerReply: row.resposta_tutor ?? null,
+    tutorResponse: row.resposta_tutor ?? null,
     attempts: row.tentativas,
     text: row.texto,
     textSource: row.origem_texto as ReminderMessage['textSource'],
@@ -191,8 +239,9 @@ function mapMessage(row: Tables<'lembrete_mensagens'>): ReminderMessage {
     providerMessageId: row.provider_message_id,
     error: row.erro,
     sentAt: row.enviado_em,
-    botoesConfirmacao: Boolean((row as unknown as { botoes_confirmacao?: boolean })?.botoes_confirmacao),
-    category: (row as unknown as { categoria?: ReminderPresetCategory })?.categoria,
+    botoesConfirmacao: Boolean(row.botoes_confirmacao),
+    category: row.categoria,
+    pausaIaMinutos: Number(row.pausa_ia_minutos ?? 1.5),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -233,8 +282,8 @@ async function fetchServices() {
   return (data || []).map(mapService);
 }
 
-async function fetchAppointments(period: AppointmentPeriod) {
-  const range = appointmentRange(period);
+async function fetchAppointments(period: AppointmentPeriod, customDate?: string) {
+  const range = appointmentRange(period, customDate);
   let query = supabase.from('lembrete_envios').select('*');
   if (range.from) query = query.gte('data_agendada', range.from);
   if (range.to) query = query.lte('data_agendada', range.to);
@@ -244,11 +293,22 @@ async function fetchAppointments(period: AppointmentPeriod) {
     .order('horario_agendado', { ascending: true, nullsFirst: false })
     .limit(500);
   if (error) throw error;
-  return (data || []).map(mapDelivery);
+  return (data || [])
+    .filter(
+      (row) =>
+        !isBloqueioOuAlmocoText(
+          row.servico,
+          row.nome_tutor,
+          row.nome_pet,
+          row.descricao
+        )
+    )
+    .map(mapDelivery);
 }
 
 async function fetchMessages(period: MessagePeriod) {
   let query = supabase.from('lembrete_mensagens').select('*');
+  if (period === 'pendentes') query = query.in('status', ['pendente', 'processando']);
   if (period === 'hoje') query = query.eq('dia_envio', todayInSaoPaulo());
   if (period === '7dias') query = query.gte('dia_envio', todayInSaoPaulo(-6));
   if (period === '30dias') query = query.gte('dia_envio', todayInSaoPaulo(-29));
@@ -257,7 +317,17 @@ async function fetchMessages(period: MessagePeriod) {
     .order('programado_para', { ascending: true })
     .limit(300);
   if (error) throw error;
-  return (data || []).map(mapMessage);
+  return (data || [])
+    .filter(
+      (row) =>
+        !isBloqueioOuAlmocoText(
+          row.nome_tutor,
+          row.nome_pet,
+          Array.isArray(row.servicos) ? row.servicos.join(' ') : null,
+          row.texto
+        )
+    )
+    .map(mapMessage);
 }
 
 async function fetchEvents() {
@@ -299,8 +369,11 @@ async function fetchSettings(): Promise<ReminderSettings> {
   if (error) throw error;
   return {
     autoSend: data?.envio_automatico ?? false,
-    clinicName: data?.nome_clinica ?? 'Clínica Veterinária',
+    clinicName:
+      data?.nome_clinica ??
+      'C.V.I. - Centro Veterinário Integrado',
     testPhone: data?.telefone_teste ?? null,
+    pausaIaMinutos: Number((data as unknown as { pausa_ia_minutos?: number })?.pausa_ia_minutos ?? 1.5),
     updatedAt: data?.updated_at ?? new Date().toISOString(),
   };
 }
@@ -343,6 +416,63 @@ async function fetchDiagnostics(): Promise<ReminderDiagnostics> {
   };
 }
 
+function extractUazapiMessageId(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, any>;
+  const data = obj.data && typeof obj.data === 'object' ? (obj.data as Record<string, any>) : obj;
+  const id =
+    data.messageid ??
+    data.messageId ??
+    data.id ??
+    data.key?.id ??
+    data.message?.messageid ??
+    data.message?.id ??
+    null;
+  return id ? String(id) : null;
+}
+
+async function markMessageSentInDb(
+  messageId: number,
+  text?: string | null,
+  providerMessageId?: string | null
+) {
+  const nowIso = new Date().toISOString();
+
+  // 1. Tenta via RPC security definer (atualiza lembrete_mensagens + lembrete_envios + lembrete_eventos)
+  const { error: rpcError } = await (supabase.rpc as any)('lembrete_marcar_enviado_manual', {
+    p_mensagem_id: messageId,
+    p_texto: text ?? null,
+    p_provider_message_id: providerMessageId ?? null,
+  });
+
+  if (rpcError) {
+    // Fallback caso a migration da RPC ainda não tenha sido aplicada no SQL Editor
+    await supabase
+      .from('lembrete_mensagens')
+      .update({
+        status: 'enviado',
+        ...(text ? { texto: text } : {}),
+        enviado_em: nowIso,
+        origem_texto: 'exemplo',
+        ...(providerMessageId ? { provider_message_id: providerMessageId } : {}),
+        erro: null,
+      })
+      .eq('id', messageId);
+  }
+
+  // 2. Garante que o agendamento na tabela lembrete_envios saia imediatamente de "Na fila" para "Enviado"
+  await supabase
+    .from('lembrete_envios')
+    .update({
+      status: 'enviado',
+      enviado_em: nowIso,
+      ...(providerMessageId ? { provider_message_id: providerMessageId } : {}),
+      erro: null,
+    })
+    .eq('mensagem_id', messageId)
+    .neq('status', 'cancelado');
+}
+
 /** Pede à edge function para processar a fila agora (sem esperar o cron). */
 async function processQueueNow() {
   const { error } = await supabase.functions.invoke('lembretes', { body: { acao: 'processar' } });
@@ -365,7 +495,8 @@ function configurationPayload(input: ReminderConfigurationInput) {
   return {
     nome: input.name.trim(),
     categoria: input.category || 'consulta',
-    botoes_confirmacao: input.botoesConfirmacao ?? false,
+    botoes_confirmacao: Boolean(input.botoesConfirmacao),
+    pausa_ia_minutos: input.pausaIaMinutos ?? 1.5,
     ativo: input.enabled,
     dias_antecedencia: input.daysInAdvance,
     horario_envio: input.sendTime,
@@ -378,7 +509,7 @@ function configurationPayload(input: ReminderConfigurationInput) {
     intervalo_min_segundos: input.intervalMinSeconds,
     intervalo_max_segundos: input.intervalMaxSeconds,
     janela_envio_horas: input.sendWindowHours,
-    somente_confirmados: input.onlyConfirmed,
+    somente_confirmados: Boolean(input.onlyConfirmed),
   };
 }
 
@@ -433,12 +564,14 @@ export function useReminderMessageEvents(messageId: number | null) {
 }
 
 export function useReminders({
-  appointmentPeriod = 'amanha',
-  messagePeriod = 'hoje',
+  appointmentPeriod,
+  customDate,
+  messagePeriod,
 }: {
-  appointmentPeriod?: AppointmentPeriod;
-  messagePeriod?: MessagePeriod;
-} = {}) {
+  appointmentPeriod: AppointmentPeriod;
+  customDate?: string;
+  messagePeriod: MessagePeriod;
+}) {
   const queryClient = useQueryClient();
 
   const configurationsQuery = useQuery({
@@ -454,14 +587,20 @@ export function useReminders({
     retry: false,
   });
   const appointmentsQuery = useQuery({
-    queryKey: [...KEYS.appointments, appointmentPeriod],
-    queryFn: () => fetchAppointments(appointmentPeriod),
+    queryKey: [...KEYS.appointments, appointmentPeriod, customDate || ''],
+    queryFn: () => fetchAppointments(appointmentPeriod, customDate),
     staleTime: 15_000,
     retry: false,
   });
   const tomorrowQuery = useQuery({
     queryKey: [...KEYS.appointments, 'amanha'],
     queryFn: () => fetchAppointments('amanha'),
+    staleTime: 15_000,
+    retry: false,
+  });
+  const mondayQuery = useQuery({
+    queryKey: [...KEYS.appointments, 'segunda'],
+    queryFn: () => fetchAppointments('segunda'),
     staleTime: 15_000,
     retry: false,
   });
@@ -508,6 +647,24 @@ export function useReminders({
     };
   }, [queryClient]);
 
+  // Se houver mensagens pendentes na fila com horário vencido ou vencendo no próximo minuto,
+  // aciona automaticamente a edge function para continuar drenando a fila sem empacar.
+  useEffect(() => {
+    const todayMsgs = todayMessagesQuery.data ?? [];
+    const autoSendEnabled = settingsQuery.data?.autoSend ?? false;
+    const now = Date.now();
+    const hasDuePending = todayMsgs.some(
+      (msg) =>
+        msg.status === 'pendente' &&
+        (msg.trigger === 'manual' ||
+          msg.trigger === 'teste' ||
+          (autoSendEnabled && new Date(msg.scheduledFor).getTime() <= now + 55_000))
+    );
+    if (hasDuePending) {
+      processQueueNow();
+    }
+  }, [todayMessagesQuery.dataUpdatedAt, settingsQuery.data?.autoSend]);
+
   const refreshAll = () => {
     for (const key of Object.values(KEYS)) queryClient.invalidateQueries({ queryKey: key });
   };
@@ -543,9 +700,21 @@ export function useReminders({
         .update(configurationPayload(input))
         .eq('id', id);
       if (error) throw error;
+
+      // Sincroniza mensagens pendentes para a nova configuração de botões e categoria
+      await supabase
+        .from('lembrete_mensagens')
+        .update({
+          botoes_confirmacao: Boolean(input.botoesConfirmacao),
+          categoria: input.category || 'consulta',
+        } as any)
+        .eq('configuracao_id', id)
+        .eq('status', 'pendente');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.configurations });
+      queryClient.invalidateQueries({ queryKey: KEYS.appointments });
+      queryClient.invalidateQueries({ queryKey: KEYS.messages });
       toast.success('Regra atualizada');
     },
     onError: (error) => {
@@ -604,6 +773,42 @@ export function useReminders({
     onError: (error) =>
       toast.error('Não foi possível disparar agora', {
         description: errorMessage(error, 'Tente novamente em instantes.'),
+      }),
+  });
+
+  const dispatchDate = useMutation({
+    mutationFn: async ({
+      targetDate,
+      configurationId,
+    }: {
+      targetDate: string;
+      configurationId?: number;
+    }) => {
+      const { data, error } = await supabase.rpc('lembretes_disparar_data' as any, {
+        p_data_alvo: targetDate,
+        p_configuracao_id: configurationId ?? null,
+      });
+      if (error) throw error;
+      await processQueueNow();
+      return (data as number) ?? 0;
+    },
+    onSuccess: (count, { targetDate }) => {
+      refreshQueue();
+      const parts = targetDate.split('-');
+      const dataFormatada = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : targetDate;
+      toast.success(
+        count > 0 ? `${count} lembrete(s) na fila para envio` : 'Nenhum lembrete novo para esta data',
+        {
+          description:
+            count > 0
+              ? `Lembretes dos atendimentos de ${dataFormatada} estão sendo enviados pelo WhatsApp. Acompanhe na aba Mensagens.`
+              : `Todos os tutores de ${dataFormatada} já receberam mensagem hoje ou já estão na fila.`,
+        }
+      );
+    },
+    onError: (error) =>
+      toast.error('Não foi possível disparar lembretes desta data', {
+        description: errorMessage(error, 'Erro ao agendar envio'),
       }),
   });
 
@@ -666,20 +871,8 @@ export function useReminders({
   // --- Serviços ------------------------------------------------------------
 
   const saveService = useMutation({
-    mutationFn: async (input: {
-      id?: number;
-      name: string;
-      color: ReminderServiceColor;
-      active?: boolean;
-      /** undefined mantém o texto atual; null ou vazio volta a usar o nome. */
-      messageText?: string | null;
-    }) => {
-      const payload = {
-        nome: input.name.trim(),
-        cor: input.color,
-        ativo: input.active ?? true,
-        ...(input.messageText !== undefined ? { texto_mensagem: input.messageText?.trim() || null } : {}),
-      };
+    mutationFn: async (input: { id?: number; name: string; color: ReminderServiceColor; active?: boolean }) => {
+      const payload = { nome: input.name.trim(), cor: input.color, ativo: input.active ?? true };
       const { error } = input.id
         ? await supabase.from('lembrete_servicos').update(payload).eq('id', input.id)
         : await supabase
@@ -719,16 +912,18 @@ export function useReminders({
     mutationFn: async ({ id, input }: { id?: number; input: ReminderAppointmentInput }) => {
       const service = servicesQuery.data?.find((item) => item.id === input.serviceId);
       const payload = {
-        nome_tutor: input.ownerName.trim(),
+        nome_tutor: input.ownerName?.trim() || 'Tutor',
         telefone: normalizePhoneDigits(input.phone),
         nome_pet: input.petName?.trim() || null,
-        // Sem categoria escolhida, mantém o serviço que veio da importação.
-        ...(input.serviceId ? { servico_id: input.serviceId, servico: service?.name ?? null } : {}),
-        servico_texto: input.serviceText?.trim() || null,
+        // Sem categoria escolhida, limpa ou mantém null
+        ...(input.serviceId ? { servico_id: input.serviceId, servico: service?.name ?? null } : { servico_id: null, servico: null }),
         configuracao_id: input.configurationId,
         data_agendada: input.appointmentDate,
         horario_agendado: input.appointmentTime || null,
         descricao: input.description?.trim() || null,
+        editado_manualmente: true,
+        ...(input.appointmentStatus ? { status_agendamento: input.appointmentStatus } : {}),
+        ...(input.appointmentStatus === 'CANCELADO' ? { status: 'cancelado' } : {}),
       };
       if (id) {
         const { error } = await supabase.from('lembrete_envios').update(payload).eq('id', id);
@@ -740,7 +935,7 @@ export function useReminders({
         agendamento_chave: `manual:${crypto.randomUUID()}`,
         origem: 'manual',
         status: 'pendente',
-        status_agendamento: 'CONFIRMADO',
+        status_agendamento: 'AGENDADO',
       });
       if (error) throw error;
     },
@@ -748,7 +943,7 @@ export function useReminders({
       queryClient.invalidateQueries({ queryKey: KEYS.appointments });
       toast.success(variables.id ? 'Agendamento atualizado' : 'Agendamento cadastrado', {
         description: variables.id
-          ? undefined
+          ? 'Alteração salva e protegida contra sobrescrita.'
           : 'O lembrete será enviado automaticamente no horário da regra.',
       });
     },
@@ -762,7 +957,13 @@ export function useReminders({
     mutationFn: async ({ id, status }: { id: number; status: 'cancelado' | 'pendente' }) => {
       const { error } = await supabase
         .from('lembrete_envios')
-        .update({ status, erro: null, ...(status === 'pendente' ? { mensagem_id: null } : {}) })
+        .update({
+          status,
+          erro: null,
+          editado_manualmente: true,
+          status_agendamento: status === 'cancelado' ? 'CANCELADO' : 'AGENDADO',
+          ...(status === 'pendente' ? { mensagem_id: null } : {}),
+        })
         .eq('id', id);
       if (error) throw error;
     },
@@ -773,6 +974,37 @@ export function useReminders({
       });
     },
     onError: () => toast.error('Não foi possível alterar o agendamento'),
+  });
+
+  const updateAppointmentAttendanceStatus = useMutation({
+    mutationFn: async ({
+      id,
+      statusAgendamento,
+      statusEnvio,
+    }: {
+      id: number;
+      statusAgendamento: 'AGENDADO' | 'CONFIRMADO' | 'CANCELADO' | 'REMARCAR';
+      statusEnvio?: ReminderDeliveryStatus;
+    }) => {
+      const payload: Record<string, unknown> = {
+        status_agendamento: statusAgendamento,
+        editado_manualmente: true,
+        updated_at: new Date().toISOString(),
+      };
+      if (statusEnvio) {
+        payload.status = statusEnvio;
+      } else if (statusAgendamento === 'CANCELADO') {
+        payload.status = 'cancelado';
+      }
+      const { error } = await supabase.from('lembrete_envios').update(payload).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: KEYS.appointments });
+      queryClient.invalidateQueries({ queryKey: KEYS.messages });
+      toast.success(`Status alterado para ${vars.statusAgendamento.toLowerCase()}`);
+    },
+    onError: () => toast.error('Não foi possível alterar o status do atendimento'),
   });
 
   const deleteAppointment = useMutation({
@@ -813,7 +1045,10 @@ export function useReminders({
       configurationId: number;
       rows: ReminderSpreadsheetImportRow[];
     }): Promise<SpreadsheetImportResult> => {
-      const payload = rows.map((row) => ({
+      const validRows = rows.filter(
+        (row) => !isBloqueioOuAlmocoText(row.service, row.description, row.ownerName, row.petName)
+      );
+      const payload = validRows.map((row) => ({
         configuracao_id: configurationId,
         agendamento_chave: `planilha:${row.importKey}`,
         data_agendada: row.appointmentDate,
@@ -887,8 +1122,6 @@ export function useReminders({
       }),
   });
 
-  // Envio direto com o texto revisado. O banco reserva a mensagem antes (o
-  // agendador não a envia de novo) e é avisado do resultado depois.
   const sendDirectWhatsApp = useMutation({
     mutationFn: async ({
       messageId,
@@ -903,69 +1136,274 @@ export function useReminders({
       botoesConfirmacao?: boolean;
       clinicName?: string;
     }) => {
-      const cleanPhone = phone.split('@')[0].replace(/\D/g, '');
-      const { error: reserveError } = await supabase.rpc('lembretes_reservar_envio_manual', {
-        p_mensagem_id: messageId,
-        p_texto: text,
-      });
-      if (reserveError) throw reserveError;
-
+      const digits = phone.split('@')[0].replace(/\D/g, '');
+      const cleanPhone = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
       let response: unknown;
-      try {
-        if (botoesConfirmacao) {
-          response = await sendMenuButtons(
-            cleanPhone,
-            text,
-            [
-              { id: 'confirmar_agendamento', text: 'Confirmar' },
-              { id: 'nao_confirmar_agendamento', text: 'Não Confirmar' },
-            ],
-            clinicName
-          );
-        } else {
-          response = await sendText(cleanPhone, text);
+
+      if (botoesConfirmacao) {
+        const result = await sendMenuButtons(
+          cleanPhone,
+          text,
+          [
+            { id: 'confirmar_agendamento', text: 'Confirmar' },
+            { id: 'cancelar_agendamento', text: 'Cancelar' },
+          ],
+          clinicName
+        );
+        response = result;
+        if (result.fallbackToText) {
+          toast.warning('Enviado em texto simples', {
+            description: 'A Uazapi recusou os botões interativos e entregou a mensagem como texto.',
+          });
         }
-      } catch (sendError) {
-        // Timeout ou erro de rede: a mensagem pode ter saído. Não reenvie sem conferir.
-        await supabase.rpc('lembretes_concluir_envio_manual', {
-          p_mensagem_id: messageId,
-          p_enviado: false,
-          p_erro:
-            sendError instanceof Error
-              ? `${sendError.message}. Confira no WhatsApp se a mensagem chegou antes de reenviar.`
-              : 'Falha no envio. Confira no WhatsApp se a mensagem chegou antes de reenviar.',
-        });
-        throw sendError;
+      } else {
+        response = await sendText(cleanPhone, text);
       }
 
-      const providerId =
-        (response as { messageid?: string; id?: string; key?: { id?: string } } | null)?.messageid ??
-        (response as { id?: string } | null)?.id ??
-        (response as { key?: { id?: string } } | null)?.key?.id ??
-        null;
-      const { error: concludeError } = await supabase.rpc('lembretes_concluir_envio_manual', {
-        p_mensagem_id: messageId,
-        p_enviado: true,
-        p_provider_message_id: providerId,
+      // Pausa a IA/bot no Redis para este número
+      pauseBotInRedis(cleanPhone, 1.5).catch((err) => {
+        console.warn('[useReminders] Erro ao pausar bot no Redis após envio manual:', err);
       });
-      if (concludeError) {
-        throw new Error(
-          'A mensagem foi enviada, mas o painel não conseguiu registrar. Não reenvie: confira a aba Mensagens.'
-        );
+
+      const providerId = extractUazapiMessageId(response);
+      try {
+        await markMessageSentInDb(messageId, text, providerId);
+      } catch (err) {
+        console.warn('Status no Supabase não atualizado, mas WhatsApp disparado:', err);
       }
+
       return response;
+    },
+    onSuccess: (data) => {
+      refreshQueue();
+      const res = data as { fallbackToText?: boolean } | undefined;
+      if (!res?.fallbackToText) {
+        toast.success('Mensagem enviada com sucesso pelo WhatsApp!');
+      }
+    },
+    onError: (error) => {
+      toast.error('Não foi possível enviar pelo WhatsApp', {
+        description: error instanceof Error ? error.message : 'Verifique a conexão da Uazapi.',
+      });
+    },
+  });
+
+  const markMessageAsSent = useMutation({
+    mutationFn: async ({ messageId, text }: { messageId: number; text?: string }) => {
+      await markMessageSentInDb(messageId, text ?? null, null);
     },
     onSuccess: () => {
       refreshQueue();
-      toast.success('Mensagem enviada pelo WhatsApp');
+      toast.success('Status atualizado para Enviado!', {
+        description: 'A mensagem saiu da fila e não será enviada novamente.',
+      });
     },
     onError: (error) => {
+      toast.error('Não foi possível atualizar o status', {
+        description: error instanceof Error ? error.message : 'Tente novamente.',
+      });
+    },
+  });
+
+  const unlockQueue = useMutation({
+    mutationFn: async (action: 'pendente' | 'enviado' | 'falha' = 'pendente') => {
+      // 1. Tenta via RPC lembretes_destravar_fila
+      const { error } = await (supabase.rpc as any)('lembretes_destravar_fila', {
+        p_acao: action,
+      });
+
+      if (error) {
+        console.warn('RPC lembretes_destravar_fila falhou, usando fallback direto via cliente:', error.message);
+        const nowIso = new Date().toISOString();
+        if (action === 'enviado') {
+          await supabase
+            .from('lembrete_mensagens')
+            .update({ status: 'enviado', processando_desde: null, enviado_em: nowIso, erro: null })
+            .eq('status', 'processando');
+          await supabase
+            .from('lembrete_envios')
+            .update({ status: 'enviado', enviado_em: nowIso, erro: null })
+            .eq('status', 'processando');
+        } else if (action === 'falha') {
+          await supabase
+            .from('lembrete_mensagens')
+            .update({ status: 'falha', processando_desde: null, erro: 'Interrompido manualmente pelo painel.' })
+            .eq('status', 'processando');
+          await supabase
+            .from('lembrete_envios')
+            .update({ status: 'falha', erro: 'Interrompido manualmente pelo painel.' })
+            .eq('status', 'processando');
+        } else {
+          await supabase
+            .from('lembrete_mensagens')
+            .update({ status: 'pendente', processando_desde: null, programado_para: nowIso, disparo: 'manual', erro: null })
+            .eq('status', 'processando');
+          await supabase
+            .from('lembrete_envios')
+            .update({ status: 'pendente', erro: null })
+            .eq('status', 'processando');
+        }
+      }
+
+      if (action === 'pendente') {
+        await processQueueNow();
+      }
+    },
+    onSuccess: (_, action) => {
+      refreshAll();
+      const labels = {
+        pendente: 'Lembretes destravados e devolvidos para a fila com sucesso!',
+        enviado: 'Lembretes marcados como enviados com sucesso!',
+        falha: 'Lembretes marcados como falha para revisão.',
+      };
+      toast.success(labels[action ?? 'pendente']);
+    },
+    onError: (error) => {
+      toast.error('Não foi possível destravar a fila', {
+        description: error instanceof Error ? error.message : 'Tente novamente.',
+      });
+    },
+  });
+
+  const unlockAppointment = useMutation({
+    mutationFn: async ({
+      appointmentId,
+      action = 'pendente',
+    }: {
+      appointmentId: number;
+      action?: 'pendente' | 'enviado' | 'falha';
+    }) => {
+      // 1. Tenta via RPC
+      const { error } = await (supabase.rpc as any)('lembrete_destravar_agendamento', {
+        p_envio_id: appointmentId,
+        p_novo_status: action,
+      });
+
+      if (error) {
+        console.warn('RPC lembrete_destravar_agendamento falhou, usando fallback direto via cliente:', error.message);
+        const nowIso = new Date().toISOString();
+        const { data: item } = await supabase
+          .from('lembrete_envios')
+          .select('mensagem_id')
+          .eq('id', appointmentId)
+          .maybeSingle();
+
+        await supabase
+          .from('lembrete_envios')
+          .update({
+            status: action,
+            ...(action === 'enviado' ? { enviado_em: nowIso, erro: null } : {}),
+            ...(action === 'pendente' ? { erro: null } : {}),
+            ...(action === 'falha' ? { erro: 'Interrompido manualmente pelo painel.' } : {}),
+          })
+          .eq('id', appointmentId);
+
+        if (item?.mensagem_id) {
+          await supabase
+            .from('lembrete_mensagens')
+            .update({
+              status: action,
+              processando_desde: null,
+              ...(action === 'enviado' ? { enviado_em: nowIso, erro: null } : {}),
+              ...(action === 'pendente' ? { programado_para: nowIso, disparo: 'manual', erro: null } : {}),
+              ...(action === 'falha' ? { erro: 'Interrompido manualmente pelo painel.' } : {}),
+            })
+            .eq('id', item.mensagem_id);
+        }
+      }
+
+      if (action === 'pendente') {
+        await processQueueNow();
+      }
+    },
+    onSuccess: (_, { action }) => {
+      refreshAll();
+      toast.success(
+        action === 'enviado'
+          ? 'Marcado como enviado!'
+          : action === 'falha'
+          ? 'Marcado como falha!'
+          : 'Devolvido para a fila!'
+      );
+    },
+    onError: (error) => {
+      toast.error('Erro ao atualizar agendamento', {
+        description: error instanceof Error ? error.message : 'Tente novamente.',
+      });
+    },
+  });
+
+  const processQueue = useMutation({
+    mutationFn: async () => {
+      await (supabase.rpc as any)('lembretes_destravar_fila_pendente', {
+        p_data_alvo: null,
+        p_configuracao_id: null,
+      }).catch(() => undefined);
+      await processQueueNow();
+    },
+    onSuccess: () => {
       refreshQueue();
-      toast.error('Não foi possível enviar pelo WhatsApp', {
-        description: errorMessage(
-          error,
-          error instanceof Error ? error.message : 'Verifique a conexão da uazapi.'
-        ),
+      toast.success('Processamento da fila acionado', {
+        description: 'Os lembretes pendentes estão saindo um a um pelo WhatsApp.',
+      });
+    },
+    onError: (error) => {
+      toast.error('Não foi possível processar a fila agora', {
+        description: errorMessage(error, 'Tente novamente em instantes.'),
+      });
+    },
+  });
+
+  const updateConfirmationStatus = useMutation({
+    mutationFn: async ({
+      messageId,
+      status,
+      customerReply,
+    }: {
+      messageId: number;
+      status: ReminderConfirmationStatus;
+      customerReply?: string | null;
+    }) => {
+      // Tenta via RPC lembrete_atualizar_confirmacao se disponível
+      const { error: rpcError } = await (supabase.rpc as any)('lembrete_atualizar_confirmacao', {
+        p_mensagem_id: messageId,
+        p_status: status,
+        p_resposta: customerReply ?? null,
+      });
+
+      if (rpcError) {
+        const payload: Record<string, unknown> = {
+          status_confirmacao: status,
+          updated_at: new Date().toISOString(),
+        };
+        if (status === 'confirmado') payload.confirmado_em = new Date().toISOString();
+        if (customerReply) payload.resposta_tutor = customerReply;
+
+        const { error } = await supabase
+          .from('lembrete_mensagens')
+          .update(payload)
+          .eq('id', messageId);
+        if (error) throw error;
+
+        // Sincroniza status_agendamento em lembrete_envios se confirmado, cancelado ou remarcar
+        if (status === 'confirmado') {
+          await supabase.from('lembrete_envios').update({ status_agendamento: 'CONFIRMADO' }).eq('mensagem_id', messageId);
+        } else if (status === 'cancelado') {
+          await supabase.from('lembrete_envios').update({ status_agendamento: 'CANCELADO' }).eq('mensagem_id', messageId);
+        } else if (status === 'remarcar') {
+          await supabase.from('lembrete_envios').update({ status_agendamento: 'REMARCAR' }).eq('mensagem_id', messageId);
+        }
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: KEYS.messages });
+      queryClient.invalidateQueries({ queryKey: KEYS.appointments });
+      queryClient.invalidateQueries({ queryKey: KEYS.events });
+      toast.success('Status de confirmação atualizado!');
+    },
+    onError: (error) => {
+      toast.error('Não foi possível atualizar confirmação', {
+        description: error instanceof Error ? error.message : 'Tente novamente.',
       });
     },
   });
@@ -973,7 +1411,9 @@ export function useReminders({
   // --- Ajustes -------------------------------------------------------------
 
   const updateSettings = useMutation({
-    mutationFn: async (input: Partial<Pick<ReminderSettings, 'autoSend' | 'clinicName' | 'testPhone' | 'pausaIaMinutos'>>) => {
+    mutationFn: async (
+      input: Partial<Pick<ReminderSettings, 'autoSend' | 'clinicName' | 'testPhone' | 'pausaIaMinutos'>>
+    ) => {
       const payload: Record<string, unknown> = {};
       if (input.autoSend !== undefined) payload.envio_automatico = input.autoSend;
       if (input.clinicName !== undefined) payload.nome_clinica = input.clinicName.trim();
@@ -981,7 +1421,7 @@ export function useReminders({
         payload.telefone_teste = input.testPhone ? normalizePhoneDigits(input.testPhone) : null;
       }
       if (input.pausaIaMinutos !== undefined) {
-        payload.pausa_ia_minutos = input.pausaIaMinutos;
+        payload.pausa_ia_minutos = Number(input.pausaIaMinutos);
       }
       const { error } = await supabase.from('lembrete_ajustes').update(payload).eq('id', 1);
       if (error) throw error;
@@ -1011,10 +1451,13 @@ export function useReminders({
 
   const stats = useMemo(() => {
     const tomorrow = tomorrowQuery.data ?? [];
+    const monday = mondayQuery.data ?? [];
     const today = todayMessagesQuery.data ?? [];
     return {
       tomorrowAppointments: tomorrow.filter((item) => item.status !== 'cancelado').length,
       tomorrowPending: tomorrow.filter((item) => item.status === 'pendente' && !item.messageId).length,
+      mondayAppointments: monday.filter((item) => item.status !== 'cancelado').length,
+      mondayPending: monday.filter((item) => item.status === 'pendente' && !item.messageId).length,
       queued: today.filter((item) => item.status === 'pendente' || item.status === 'processando').length,
       sentToday: today.filter((item) => item.status === 'enviado' && item.trigger !== 'teste').length,
       failedToday: today.filter((item) => item.status === 'falha').length,
@@ -1024,7 +1467,7 @@ export function useReminders({
           .map((item) => item.scheduledFor)
           .sort()[0] ?? null,
     };
-  }, [tomorrowQuery.data, todayMessagesQuery.data]);
+  }, [tomorrowQuery.data, mondayQuery.data, todayMessagesQuery.data]);
 
   return {
     configurations,
@@ -1049,18 +1492,25 @@ export function useReminders({
     toggleReminder,
     deleteReminder,
     dispatchNow,
+    dispatchDate,
     sendTest,
     previewAi,
     saveService,
     deleteService,
     saveAppointment,
     setAppointmentStatus,
+    updateAppointmentAttendanceStatus,
     deleteAppointment,
     sendAppointmentNow,
     importDeliveries,
     resendMessage,
     cancelMessage,
     sendDirectWhatsApp,
+    markMessageAsSent,
+    unlockQueue,
+    unlockAppointment,
+    processQueue,
+    updateConfirmationStatus,
     updateSettings,
   };
 }

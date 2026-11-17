@@ -32,6 +32,7 @@ interface AppointmentFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   appointment?: ReminderDelivery | null;
+  isDuplicate?: boolean;
   services: ReminderService[];
   configurations: ReminderConfiguration[];
   isPending: boolean;
@@ -61,6 +62,7 @@ const AppointmentFormDialog = ({
   open,
   onOpenChange,
   appointment,
+  isDuplicate = false,
   services,
   configurations,
   isPending,
@@ -70,11 +72,11 @@ const AppointmentFormDialog = ({
   const [phone, setPhone] = useState('');
   const [petName, setPetName] = useState('');
   const [serviceId, setServiceId] = useState<string>('');
-  const [serviceText, setServiceText] = useState('');
   const [configurationId, setConfigurationId] = useState<string>(AUTO);
   const [appointmentDate, setAppointmentDate] = useState(todayInSaoPaulo(1));
   const [appointmentTime, setAppointmentTime] = useState('');
   const [description, setDescription] = useState('');
+  const [appointmentStatus, setAppointmentStatus] = useState<string>('AGENDADO');
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
@@ -83,13 +85,21 @@ const AppointmentFormDialog = ({
     setPhone(appointment ? normalizePhoneDigits(appointment.phone) : '');
     setPetName(appointment?.petName ?? '');
     setServiceId(appointment?.serviceId ? String(appointment.serviceId) : '');
-    setServiceText(appointment?.serviceText ?? '');
     setConfigurationId(appointment?.configurationId ? String(appointment.configurationId) : AUTO);
-    setAppointmentDate(appointment?.appointmentDate ?? todayInSaoPaulo(1));
+    setAppointmentStatus(appointment?.appointmentStatus ?? 'AGENDADO');
+
+    // Se for duplicação de um atendimento que já passou, sugere amanhã por padrão
+    const initialDate = appointment?.appointmentDate
+      ? (isDuplicate && appointment.appointmentDate < todayInSaoPaulo()
+          ? todayInSaoPaulo(1)
+          : appointment.appointmentDate)
+      : todayInSaoPaulo(1);
+    setAppointmentDate(initialDate);
+
     setAppointmentTime(appointment?.appointmentTime ?? '');
     setDescription(appointment?.description ?? '');
     setSubmitted(false);
-  }, [open, appointment]);
+  }, [open, appointment, isDuplicate]);
 
   const phoneDigits = normalizePhoneDigits(phone);
   const selectedServiceId = serviceId ? Number(serviceId) : null;
@@ -101,9 +111,7 @@ const AppointmentFormDialog = ({
   const today = todayInSaoPaulo();
 
   const errors = {
-    ownerName: ownerName.trim().length === 0,
     phone: phoneDigits.length < 10 || phoneDigits.length > 13,
-    service: !serviceId && !appointment?.service,
     date: !/^\d{4}-\d{2}-\d{2}$/.test(appointmentDate),
   };
   const isValid = !Object.values(errors).some(Boolean);
@@ -118,15 +126,16 @@ const AppointmentFormDialog = ({
     setSubmitted(true);
     if (!isValid || isPending) return;
     onSubmit({
-      ownerName,
+      ownerName: ownerName.trim() || 'Tutor',
       phone: phoneDigits.length <= 11 ? `55${phoneDigits}` : phoneDigits,
       petName: petName.trim() || null,
       serviceId: selectedServiceId,
-      serviceText: serviceText.trim() || null,
+      serviceText: selectedServiceId ? activeServices.find((s) => s.id === selectedServiceId)?.name ?? null : null,
       configurationId: configurationId === AUTO ? chosenRule?.id ?? null : Number(configurationId),
       appointmentDate,
       appointmentTime: appointmentTime || null,
       description: description.trim() || null,
+      appointmentStatus: isDuplicate ? 'AGENDADO' : appointmentStatus,
     });
   };
 
@@ -134,30 +143,33 @@ const AppointmentFormDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{appointment ? 'Editar agendamento' : 'Novo agendamento'}</DialogTitle>
+          <DialogTitle>
+            {isDuplicate ? 'Duplicar agendamento' : appointment ? 'Editar agendamento' : 'Novo agendamento'}
+          </DialogTitle>
           <DialogDescription>
-            O tutor recebe o lembrete pelo WhatsApp conforme a regra escolhida.
+            {isDuplicate
+              ? 'Crie um novo agendamento a partir dos dados existentes. Altere data/horário se desejar.'
+              : 'O tutor recebe o lembrete pelo WhatsApp conforme a regra escolhida.'}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="appointment-owner">Nome do tutor</Label>
+              <Label htmlFor="appointment-owner">Nome do tutor (opcional)</Label>
               <Input
                 id="appointment-owner"
                 value={ownerName}
                 onChange={(event) => setOwnerName(event.target.value)}
+                placeholder="Ex.: Carlos (opcional)"
                 className="min-h-11"
-                aria-invalid={submitted && errors.ownerName}
                 autoComplete="off"
               />
-              {submitted && errors.ownerName && (
-                <p className="text-sm text-destructive" role="alert">Informe o nome do tutor.</p>
-              )}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="appointment-phone">WhatsApp (com DDD)</Label>
+              <Label htmlFor="appointment-phone">
+                WhatsApp (com DDD) <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="appointment-phone"
                 value={phone}
@@ -167,43 +179,42 @@ const AppointmentFormDialog = ({
                 className="min-h-11 tabular-nums"
                 aria-invalid={submitted && errors.phone}
                 autoComplete="off"
+                required
               />
               {submitted && errors.phone && (
-                <p className="text-sm text-destructive" role="alert">Informe um número com DDD.</p>
+                <p className="text-sm text-destructive" role="alert">Informe um número com DDD válido.</p>
               )}
             </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="appointment-pet">Pet(s)</Label>
+              <Label htmlFor="appointment-pet">Pet(s) (opcional)</Label>
               <Input
                 id="appointment-pet"
                 value={petName}
                 onChange={(event) => setPetName(event.target.value)}
-                placeholder="Ex.: Toby e Mel"
+                placeholder="Ex.: Toby e Mel (opcional)"
                 className="min-h-11"
                 autoComplete="off"
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="appointment-service">Serviço</Label>
+              <Label htmlFor="appointment-service">Serviço (opcional)</Label>
               <Select
-                value={serviceId}
-                onValueChange={(value) => {
-                  setServiceId(value);
-                  // O texto próprio era da categoria anterior.
-                  setServiceText('');
-                }}
+                value={serviceId || 'none'}
+                onValueChange={(val) => setServiceId(val === 'none' ? '' : val)}
               >
                 <SelectTrigger
                   id="appointment-service"
                   className="min-h-11"
-                  aria-invalid={submitted && errors.service}
                 >
-                  <SelectValue placeholder={appointment?.service ?? 'Escolha o serviço'} />
+                  <SelectValue placeholder={appointment?.service ?? 'Escolha o serviço (opcional)'} />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="none">
+                    <span className="text-muted-foreground">Sem serviço específico</span>
+                  </SelectItem>
                   {activeServices.map((service) => (
                     <SelectItem key={service.id} value={String(service.id)}>
                       <ServiceBadge name={service.name} service={service} />
@@ -211,40 +222,14 @@ const AppointmentFormDialog = ({
                   ))}
                 </SelectContent>
               </Select>
-              {submitted && errors.service && (
-                <p className="text-sm text-destructive" role="alert">Escolha o serviço.</p>
-              )}
             </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="appointment-service-text">Como o serviço aparece na mensagem (opcional)</Label>
-            <Input
-              id="appointment-service-text"
-              value={serviceText}
-              onChange={(event) => setServiceText(event.target.value)}
-              placeholder={
-                activeServices.find((service) => service.id === selectedServiceId)?.messageText ??
-                activeServices.find((service) => service.id === selectedServiceId)?.name ??
-                appointment?.service ??
-                'Ex.: consulta veterinária'
-              }
-              className="min-h-11"
-              maxLength={80}
-            />
-            <p className="text-xs text-muted-foreground">
-              Em branco: usa o texto da categoria. Escreva como na frase: "Hoje é dia de{' '}
-              {serviceText.trim() ||
-                activeServices.find((service) => service.id === selectedServiceId)?.messageText ||
-                activeServices.find((service) => service.id === selectedServiceId)?.name ||
-                'consulta veterinária'}
-              ."
-            </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="appointment-date">Data do atendimento</Label>
+              <Label htmlFor="appointment-date">
+                Data do atendimento <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="appointment-date"
                 type="date"
@@ -253,7 +238,11 @@ const AppointmentFormDialog = ({
                 onChange={(event) => setAppointmentDate(event.target.value)}
                 className="min-h-11 tabular-nums"
                 aria-invalid={submitted && errors.date}
+                required
               />
+              {submitted && errors.date && (
+                <p className="text-sm text-destructive" role="alert">Informe a data do atendimento.</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="appointment-time">Horário (opcional)</Label>
@@ -306,13 +295,30 @@ const AppointmentFormDialog = ({
             />
           </div>
 
+          {appointment && !isDuplicate && (
+            <div className="space-y-1.5">
+              <Label htmlFor="appointment-status">Status do atendimento</Label>
+              <Select value={appointmentStatus} onValueChange={setAppointmentStatus}>
+                <SelectTrigger id="appointment-status" className="min-h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AGENDADO">Agendado (Padrão)</SelectItem>
+                  <SelectItem value="CONFIRMADO">Confirmado pelo tutor</SelectItem>
+                  <SelectItem value="CANCELADO">Cancelado</SelectItem>
+                  <SelectItem value="REMARCAR">Remarcar</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <DialogFooter>
             <Button type="button" variant="outline" className="min-h-11" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
             <Button type="submit" className="min-h-11" disabled={isPending}>
               {isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {appointment ? 'Salvar' : 'Cadastrar'}
+              {isDuplicate ? 'Cadastrar cópia' : appointment ? 'Salvar alterações' : 'Cadastrar agendamento'}
             </Button>
           </DialogFooter>
         </form>

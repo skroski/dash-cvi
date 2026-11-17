@@ -250,7 +250,13 @@ const ReminderFormDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{reminder ? 'Editar regra de lembrete' : 'Nova regra de lembrete'}</DialogTitle>
+          <DialogTitle>
+            {reminder && reminder.id > 0
+              ? 'Editar regra de lembrete'
+              : reminder?.id === 0
+                ? 'Duplicar regra de lembrete'
+                : 'Nova regra de lembrete'}
+          </DialogTitle>
           <DialogDescription>
             Defina quando o lembrete sai, para quais serviços e com quais frases de exemplo. A IA
             reescreve uma frase diferente para cada tutor.
@@ -515,11 +521,11 @@ const ReminderFormDialog = ({
                       Mensagem de confirmação com 2 botões (WhatsApp)
                     </Label>
                     <Badge variant="outline" className="border-emerald-600/30 bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 text-[10px]">
-                      Confirmar / Não Confirmar
+                      Confirmar / Cancelar
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Envia 2 botões interativos via Uazapi: [Confirmar] e [Não Confirmar]. Recomendado para consultas veterinárias, vacinas, banhos e serviços. Para aniversários e pesquisas de opinião, deixe desligado.
+                    Envia 2 botões interativos via Uazapi: [Confirmar] e [Cancelar]. Recomendado para consultas veterinárias, vacinas, banhos e serviços. Para aniversários e pesquisas de opinião, deixe desligado.
                   </p>
                 </div>
                 <Switch
@@ -637,7 +643,7 @@ const ReminderFormDialog = ({
                                 Confirmar
                               </div>
                               <div className="flex items-center justify-center rounded-md border border-rose-600/30 bg-rose-500/10 py-1 text-xs font-semibold text-rose-700 dark:text-rose-300">
-                                Não Confirmar
+                                Cancelar
                               </div>
                             </div>
                           )}
@@ -811,7 +817,7 @@ const ReminderFormDialog = ({
                               Confirmar
                             </div>
                             <div className="flex items-center justify-center rounded-md border border-rose-600/30 bg-rose-500/10 py-1 text-xs font-semibold text-rose-700 dark:text-rose-300">
-                              Não Confirmar
+                              Cancelar
                             </div>
                           </div>
                         )}
@@ -832,7 +838,7 @@ const ReminderFormDialog = ({
             </Button>
             <Button type="submit" className="min-h-11" disabled={isPending}>
               {isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {reminder ? 'Salvar alterações' : 'Criar regra'}
+              {reminder && reminder.id > 0 ? 'Salvar alterações' : reminder?.id === 0 ? 'Criar cópia da regra' : 'Criar regra'}
             </Button>
           </DialogFooter>
         </form>

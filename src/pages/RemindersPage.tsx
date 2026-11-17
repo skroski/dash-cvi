@@ -4,6 +4,7 @@ import {
   AlertCircle,
   BellRing,
   Bot,
+  Calendar,
   CalendarCheck2,
   CalendarDays,
   Download,
@@ -40,10 +41,12 @@ import SpreadsheetImportDialog from '@/components/shared/SpreadsheetImportDialog
 import ActivityTab from '@/components/reminders/ActivityTab';
 import AppointmentFormDialog from '@/components/reminders/AppointmentFormDialog';
 import AppointmentsTab from '@/components/reminders/AppointmentsTab';
+import DispatchRemindersDialog from '@/components/reminders/DispatchRemindersDialog';
 import MessageDetailDialog from '@/components/reminders/MessageDetailDialog';
 import MessagesTab from '@/components/reminders/MessagesTab';
 import ReminderFormDialog from '@/components/reminders/ReminderFormDialog';
 import ReminderSettingsDialog from '@/components/reminders/ReminderSettingsDialog';
+import GoogleCalendarDialog from '@/components/reminders/GoogleCalendarDialog';
 import RulesTab from '@/components/reminders/RulesTab';
 import ServicesTab from '@/components/reminders/ServicesTab';
 import TestSendDialog from '@/components/reminders/TestSendDialog';
@@ -55,6 +58,7 @@ import {
   useReminderDefaultExamples,
   useReminders,
 } from '@/hooks/useReminders';
+import { useReminderGoogleCalendar } from '@/hooks/useReminderGoogleCalendar';
 import { cn } from '@/lib/utils';
 import { exportSpreadsheet } from '@/lib/spreadsheet';
 import { parseReminderSpreadsheet } from '@/lib/operationalSpreadsheets';
@@ -128,19 +132,28 @@ const FLOW_STEPS = [
 
 const RemindersPage = () => {
   const [tab, setTab] = useState('agenda');
-  const [appointmentPeriod, setAppointmentPeriod] = useState<AppointmentPeriod>('amanha');
+  const [appointmentPeriod, setAppointmentPeriod] = useState<AppointmentPeriod>('todos');
+  const [customDate, setCustomDate] = useState<string>('');
   const [messagePeriod, setMessagePeriod] = useState<MessagePeriod>('hoje');
-  const api = useReminders({ appointmentPeriod, messagePeriod });
+  const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
+  const api = useReminders({ appointmentPeriod, customDate, messagePeriod });
   const defaultExamples = useReminderDefaultExamples();
 
   const [ruleForm, setRuleForm] = useState<RuleFormState>({ open: false, rule: null, tab: 'geral' });
-  const [appointmentForm, setAppointmentForm] = useState<{ open: boolean; appointment: ReminderDelivery | null }>({
+  const [appointmentForm, setAppointmentForm] = useState<{
+    open: boolean;
+    appointment: ReminderDelivery | null;
+    isDuplicate?: boolean;
+  }>({
     open: false,
     appointment: null,
+    isDuplicate: false,
   });
   const [importOpen, setImportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [googleCalendarOpen, setGoogleCalendarOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const gcal = useReminderGoogleCalendar();
   const [testRule, setTestRule] = useState<ReminderConfiguration | null>(null);
   const [ruleToDelete, setRuleToDelete] = useState<ReminderConfiguration | null>(null);
   const [ruleToDispatch, setRuleToDispatch] = useState<ReminderConfiguration | null>(null);
@@ -151,7 +164,9 @@ const RemindersPage = () => {
   const [fetchedMessage, setFetchedMessage] = useState<ReminderMessage | null>(null);
   const [sendingId, setSendingId] = useState<number | null>(null);
 
-  const clinicName = api.settings?.clinicName ?? 'Clínica Veterinária';
+  const clinicName =
+    api.settings?.clinicName ??
+    'C.V.I. - Centro Veterinário Integrado';
   const autoSend = api.settings?.autoSend ?? false;
   const nextDispatch = nextDispatchLabel(api.configurations);
 
@@ -185,7 +200,7 @@ const RemindersPage = () => {
 
   const saveRule = (input: ReminderConfigurationInput) => {
     const closeAfterSuccess = { onSuccess: () => setRuleForm((state) => ({ ...state, open: false })) };
-    if (ruleForm.rule) {
+    if (ruleForm.rule && ruleForm.rule.id > 0) {
       api.updateReminder.mutate({ id: ruleForm.rule.id, input }, closeAfterSuccess);
     } else {
       api.createReminder.mutate(input, closeAfterSuccess);
@@ -282,6 +297,15 @@ const RemindersPage = () => {
             </Button>
             <Button
               variant="outline"
+              onClick={() => setGoogleCalendarOpen(true)}
+              className="min-h-11 gap-1.5 border-blue-500/20 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10"
+              title="Integração Google Calendar"
+            >
+              <Calendar className="h-4 w-4" aria-hidden="true" />
+              Google Agenda
+            </Button>
+            <Button
+              variant="outline"
               size="icon"
               onClick={() => setSettingsOpen(true)}
               className="h-11 w-11"
@@ -353,21 +377,55 @@ const RemindersPage = () => {
       </Card>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" data-tour="reminders-stats">
-        <StatCard
-          title="Atendimentos amanhã"
-          value={api.stats.tomorrowAppointments}
-          icon={<CalendarDays />}
-          loading={api.statsLoading}
-          hint={`${api.stats.tomorrowPending} aguardando lembrete`}
-        />
-        <StatCard
-          title="Na fila agora"
-          value={api.stats.queued}
-          icon={<ListChecks />}
-          tone={api.stats.queued > 0 ? 'warning' : 'default'}
-          loading={api.statsLoading}
-          hint={api.stats.nextInQueue ? `Próximo às ${formatTime(api.stats.nextInQueue)}` : 'Fila vazia'}
-        />
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setTab('agenda');
+            setAppointmentPeriod('amanha');
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              setTab('agenda');
+              setAppointmentPeriod('amanha');
+            }
+          }}
+          className="cursor-pointer transition-transform hover:scale-[1.01]"
+          title="Clique para ver os atendimentos de amanhã na agenda"
+        >
+          <StatCard
+            title="Atendimentos amanhã"
+            value={api.stats.tomorrowAppointments}
+            icon={<CalendarDays />}
+            loading={api.statsLoading}
+            hint={`${api.stats.tomorrowPending} aguardando lembrete`}
+          />
+        </div>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setTab('mensagens');
+            setMessagePeriod('pendentes');
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              setTab('mensagens');
+              setMessagePeriod('pendentes');
+            }
+          }}
+          className="cursor-pointer transition-transform hover:scale-[1.01]"
+          title="Clique para ver todas as mensagens na fila"
+        >
+          <StatCard
+            title="Na fila agora (Pendentes)"
+            value={api.stats.queued}
+            icon={<ListChecks />}
+            tone={api.stats.queued > 0 ? 'warning' : 'default'}
+            loading={api.statsLoading}
+            hint={api.stats.nextInQueue ? `Próximo às ${formatTime(api.stats.nextInQueue)} · Ver fila` : 'Clique para ver a fila'}
+          />
+        </div>
         <StatCard
           title="Enviados hoje"
           value={api.stats.sentToday}
@@ -416,16 +474,96 @@ const RemindersPage = () => {
             loading={api.appointmentsLoading}
             period={appointmentPeriod}
             onPeriodChange={setAppointmentPeriod}
-            onCreate={() => setAppointmentForm({ open: true, appointment: null })}
-            onEdit={(appointment) => setAppointmentForm({ open: true, appointment })}
+            customDate={customDate}
+            onCustomDateChange={setCustomDate}
+            onOpenDispatchModal={() => {
+              setRuleToDispatch(null);
+              setDispatchDialogOpen(true);
+            }}
+            onSyncAllGoogle={() => gcal.puxarDoGoogle.mutate()}
+            syncGoogleLoading={gcal.puxarDoGoogle.isPending}
+            onCreate={() => setAppointmentForm({ open: true, appointment: null, isDuplicate: false })}
+            onEdit={(appointment) => setAppointmentForm({ open: true, appointment, isDuplicate: false })}
+            onDuplicate={(appointment) => setAppointmentForm({ open: true, appointment, isDuplicate: true })}
             onSendNow={(appointment) => {
               setSendingId(appointment.id);
               api.sendAppointmentNow.mutate(appointment.id, { onSettled: () => setSendingId(null) });
             }}
-            onCancel={(appointment) => api.setAppointmentStatus.mutate({ id: appointment.id, status: 'cancelado' })}
-            onReactivate={(appointment) => api.setAppointmentStatus.mutate({ id: appointment.id, status: 'pendente' })}
+            onCancel={(appointment) => {
+              api.setAppointmentStatus.mutate(
+                { id: appointment.id, status: 'cancelado' },
+                {
+                  onSuccess: () => {
+                    if (appointment.messageId) {
+                      api.updateConfirmationStatus.mutate({ messageId: appointment.messageId, status: 'cancelado' });
+                    }
+                    if (appointment.googleEventId) {
+                      gcal.sincronizarAgendamento.mutate(appointment.id);
+                    }
+                  },
+                }
+              );
+            }}
+            onReactivate={(appointment) => {
+              api.setAppointmentStatus.mutate(
+                { id: appointment.id, status: 'pendente' },
+                {
+                  onSuccess: () => {
+                    if (appointment.messageId) {
+                      api.updateConfirmationStatus.mutate({ messageId: appointment.messageId, status: 'aguardando' });
+                    }
+                    if (appointment.googleEventId) {
+                      gcal.sincronizarAgendamento.mutate(appointment.id);
+                    }
+                  },
+                }
+              );
+            }}
+            onChangeAttendanceStatus={(appointment, status) => {
+              api.updateAppointmentAttendanceStatus.mutate(
+                {
+                  id: appointment.id,
+                  statusAgendamento: status,
+                  statusEnvio:
+                    status === 'CANCELADO'
+                      ? 'cancelado'
+                      : appointment.status === 'cancelado'
+                      ? 'pendente'
+                      : appointment.status,
+                },
+                {
+                  onSuccess: () => {
+                    if (appointment.messageId) {
+                      const mapConf =
+                        status === 'CONFIRMADO'
+                          ? 'confirmado'
+                          : status === 'CANCELADO'
+                          ? 'cancelado'
+                          : status === 'REMARCAR'
+                          ? 'remarcar'
+                          : 'aguardando';
+                      api.updateConfirmationStatus.mutate({ messageId: appointment.messageId, status: mapConf });
+                    }
+                    if (appointment.googleEventId) {
+                      gcal.sincronizarAgendamento.mutate(appointment.id);
+                    }
+                  },
+                }
+              );
+            }}
             onDelete={setAppointmentToDelete}
             onOpenMessage={showMessage}
+            onSyncGoogle={(appointment) => gcal.sincronizarAgendamento.mutate(appointment.id)}
+            onMarkAsSent={(appointment) => {
+              if (appointment.messageId) {
+                api.markMessageAsSent.mutate({ messageId: appointment.messageId });
+              }
+            }}
+            onUnlockQueue={(action) => api.unlockQueue.mutate(action)}
+            unlockQueueLoading={api.unlockQueue.isPending}
+            onUnlockAppointment={(appointment, action) =>
+              api.unlockAppointment.mutate({ appointmentId: appointment.id, action })
+            }
             sendingId={sendingId}
           />
         </TabsContent>
@@ -438,6 +576,10 @@ const RemindersPage = () => {
             onPeriodChange={setMessagePeriod}
             onOpen={(message) => setOpenMessageId(message.id)}
             onRefresh={api.refreshAll}
+            onProcessQueue={() => api.processQueue.mutate()}
+            processQueuePending={api.processQueue.isPending}
+            onUnlockQueue={(action) => api.unlockQueue.mutate(action)}
+            unlockQueueLoading={api.unlockQueue.isPending}
           />
         </TabsContent>
 
@@ -450,8 +592,18 @@ const RemindersPage = () => {
             togglePending={api.toggleReminder.isPending}
             onCreate={() => setRuleForm({ open: true, rule: null, tab: 'geral' })}
             onEdit={(rule, initialTab = 'geral') => setRuleForm({ open: true, rule, tab: initialTab })}
+            onDuplicate={(rule) =>
+              setRuleForm({
+                open: true,
+                rule: { ...rule, id: 0, name: `${rule.name} (cópia)` },
+                tab: 'geral',
+              })
+            }
             onToggle={(rule, enabled) => api.toggleReminder.mutate({ id: rule.id, enabled })}
-            onDispatch={setRuleToDispatch}
+            onDispatch={(rule) => {
+              setRuleToDispatch(rule);
+              setDispatchDialogOpen(true);
+            }}
             onTest={setTestRule}
             onDelete={setRuleToDelete}
           />
@@ -497,12 +649,13 @@ const RemindersPage = () => {
         open={appointmentForm.open}
         onOpenChange={(open) => setAppointmentForm((state) => ({ ...state, open }))}
         appointment={appointmentForm.appointment}
+        isDuplicate={appointmentForm.isDuplicate}
         services={api.services}
         configurations={api.configurations}
         isPending={api.saveAppointment.isPending}
         onSubmit={(input) =>
           api.saveAppointment.mutate(
-            { id: appointmentForm.appointment?.id, input },
+            { id: appointmentForm.isDuplicate ? undefined : appointmentForm.appointment?.id, input },
             { onSuccess: () => setAppointmentForm((state) => ({ ...state, open: false })) }
           )
         }
@@ -524,9 +677,28 @@ const RemindersPage = () => {
             clinicName: clinic || clinicName,
           })
         }
+        onMarkAsSent={(message, text) =>
+          api.markMessageAsSent.mutate({ messageId: message.id, text })
+        }
+        onUnlockMessage={(messageId, action) => {
+          if (action === 'enviado') {
+            api.markMessageAsSent.mutate({ messageId });
+          } else {
+            api.unlockQueue.mutate(action);
+          }
+        }}
         resendPending={api.resendMessage.isPending}
         cancelPending={api.cancelMessage.isPending}
         sendDirectPending={api.sendDirectWhatsApp.isPending}
+        markAsSentPending={api.markMessageAsSent.isPending}
+        onUpdateConfirmation={(messageId, status) => {
+          api.updateConfirmationStatus.mutate({ messageId, status });
+          const apt = api.appointments.find((a) => a.messageId === messageId);
+          if (apt?.googleEventId) {
+            gcal.sincronizarAgendamento.mutate(apt.id);
+          }
+        }}
+        confirmationPending={api.updateConfirmationStatus.isPending}
       />
 
       <ReminderSettingsDialog
@@ -537,6 +709,11 @@ const RemindersPage = () => {
         onSubmit={(input) =>
           api.updateSettings.mutate(input, { onSuccess: () => setSettingsOpen(false) })
         }
+      />
+
+      <GoogleCalendarDialog
+        open={googleCalendarOpen}
+        onOpenChange={setGoogleCalendarOpen}
       />
 
       <TestSendDialog
@@ -593,43 +770,29 @@ const RemindersPage = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={!!ruleToDispatch} onOpenChange={(open) => !open && setRuleToDispatch(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Disparar “{ruleToDispatch?.name}” agora?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Os tutores com atendimento{' '}
-              {ruleToDispatch?.daysInAdvance === 0
-                ? 'hoje'
-                : ruleToDispatch?.daysInAdvance === 1
-                  ? 'amanhã'
-                  : `daqui a ${ruleToDispatch?.daysInAdvance} dias`}{' '}
-              entram na fila agora, sem esperar as {ruleToDispatch?.sendTime}. As mensagens saem uma
-              a uma, com intervalo de {ruleToDispatch?.intervalMinSeconds} a{' '}
-              {ruleToDispatch?.intervalMaxSeconds} segundos. Quem já recebeu lembrete hoje não recebe
-              de novo.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={api.dispatchNow.isPending}
-              onClick={() => {
-                if (!ruleToDispatch) return;
-                api.dispatchNow.mutate(ruleToDispatch.id, {
-                  onSuccess: () => {
-                    setRuleToDispatch(null);
-                    setTab('mensagens');
-                  },
-                });
-              }}
-            >
-              {api.dispatchNow.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              Disparar agora
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DispatchRemindersDialog
+        open={dispatchDialogOpen}
+        onOpenChange={(open) => {
+          setDispatchDialogOpen(open);
+          if (!open) setRuleToDispatch(null);
+        }}
+        appointments={api.appointments}
+        configurations={api.configurations}
+        initialConfigId={ruleToDispatch?.id}
+        isPending={api.dispatchDate.isPending}
+        onDispatch={(targetDate, configurationId) => {
+          api.dispatchDate.mutate(
+            { targetDate, configurationId },
+            {
+              onSuccess: () => {
+                setDispatchDialogOpen(false);
+                setRuleToDispatch(null);
+                setTab('mensagens');
+              },
+            }
+          );
+        }}
+      />
 
       <AlertDialog open={!!ruleToDelete} onOpenChange={(open) => !open && setRuleToDelete(null)}>
         <AlertDialogContent>

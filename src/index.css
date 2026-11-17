@@ -155,3 +155,46 @@
   background-color: hsl(189 88% 12% / 0.55);
   box-shadow: 0 12px 42px hsl(0 0% 0% / 0.25);
 }
+
+/* Kanban Board Containment & Natural Interactions */
+.kanban-scroller {
+  display: flex;
+  gap: 0.875rem;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  padding-bottom: 0.75rem;
+}
+.kanban-column {
+  scroll-snap-align: start;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px auto 680px;
+}
+@supports not (content-visibility: auto) {
+  .kanban-column {
+    contain: layout style paint;
+  }
+}
+.kanban-drag-handle {
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+.kanban-drag-handle:active,
+html.is-dragging-kanban,
+html.is-dragging-kanban * {
+  cursor: grabbing !important;
+}
+.kanban-card-actions {
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+.kanban-card:hover .kanban-card-actions,
+.kanban-card:focus-within .kanban-card-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .kanban-card-actions {
+    opacity: 1;
+  }
+}

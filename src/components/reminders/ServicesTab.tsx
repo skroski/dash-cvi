@@ -22,13 +22,7 @@ interface ServicesTabProps {
   uncategorized: string[];
   loading: boolean;
   saving: boolean;
-  onSave: (input: {
-    id?: number;
-    name: string;
-    color: ReminderServiceColor;
-    active?: boolean;
-    messageText?: string | null;
-  }) => Promise<unknown>;
+  onSave: (input: { id?: number; name: string; color: ReminderServiceColor; active?: boolean }) => Promise<unknown>;
   onDelete: (service: ReminderService) => void;
 }
 
@@ -75,10 +69,8 @@ const ServicesTab = ({
 }: ServicesTabProps) => {
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState<ReminderServiceColor>('azul');
-  const [newText, setNewText] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
-  const [editText, setEditText] = useState('');
   const [editColor, setEditColor] = useState<ReminderServiceColor>('azul');
 
   const rulesFor = (serviceId: number) =>
@@ -89,27 +81,19 @@ const ServicesTab = ({
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!newName.trim()) return;
-    await onSave({ name: newName, color: newColor, messageText: newText });
+    await onSave({ name: newName, color: newColor });
     setNewName('');
-    setNewText('');
   };
 
   const startEdit = (service: ReminderService) => {
     setEditingId(service.id);
     setEditName(service.name);
-    setEditText(service.messageText ?? '');
     setEditColor(service.color);
   };
 
   const saveEdit = async (service: ReminderService) => {
     if (!editName.trim()) return;
-    await onSave({
-      id: service.id,
-      name: editName,
-      color: editColor,
-      active: service.active,
-      messageText: editText,
-    });
+    await onSave({ id: service.id, name: editName, color: editColor, active: service.active });
     setEditingId(null);
   };
 
@@ -119,8 +103,8 @@ const ServicesTab = ({
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Serviços</CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">
-            As categorias do campo "Serviços" da agenda. O que vale em "Como aparece na mensagem"
-            entra no texto pela variável {'{{servico}}'}. Cada agendamento ainda pode ter um texto próprio.
+            As categorias do campo "Serviços" da agenda. O nome do serviço entra na mensagem pela
+            variável {'{{servico}}'}.
           </p>
         </CardHeader>
         <CardContent className="p-0">
@@ -173,20 +157,6 @@ const ServicesTab = ({
                             <X className="h-4 w-4" />
                           </Button>
                         </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor={`edit-text-${service.id}`}>Como aparece na mensagem</Label>
-                          <Input
-                            id={`edit-text-${service.id}`}
-                            value={editText}
-                            onChange={(event) => setEditText(event.target.value)}
-                            placeholder={service.name}
-                            className="min-h-11"
-                            maxLength={80}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Prévia: "Hoje é dia de {editText.trim() || editName.trim() || service.name}."
-                          </p>
-                        </div>
                         <ColorPicker value={editColor} onChange={setEditColor} idPrefix={`edit-${service.id}`} />
                       </div>
                     ) : (
@@ -197,9 +167,6 @@ const ServicesTab = ({
                             {rules.length === 0
                               ? 'Nenhuma regra envia lembrete para este serviço.'
                               : `Regra: ${rules.map((rule) => rule.name).join(', ')}`}
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            Na mensagem: "{service.messageText?.trim() || service.name}"
                           </p>
                         </div>
                         <div className="flex items-center gap-1">
@@ -253,17 +220,6 @@ const ServicesTab = ({
                   value={newName}
                   onChange={(event) => setNewName(event.target.value)}
                   placeholder="Ex.: Ultrassom"
-                  className="min-h-11"
-                  maxLength={80}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="service-text">Como aparece na mensagem (opcional)</Label>
-                <Input
-                  id="service-text"
-                  value={newText}
-                  onChange={(event) => setNewText(event.target.value)}
-                  placeholder="Ex.: ultrassom abdominal"
                   className="min-h-11"
                   maxLength={80}
                 />

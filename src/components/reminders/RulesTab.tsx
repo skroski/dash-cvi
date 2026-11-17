@@ -15,6 +15,7 @@ import {
   Timer,
   Trash2,
   X,
+  Copy,
 } from 'lucide-react';
 import {
   Accordion,
@@ -46,6 +47,7 @@ interface RulesTabProps {
   togglePending: boolean;
   onCreate: () => void;
   onEdit: (rule: ReminderConfiguration, tab?: 'geral' | 'frases' | 'ia') => void;
+  onDuplicate?: (rule: ReminderConfiguration) => void;
   onToggle: (rule: ReminderConfiguration, enabled: boolean) => void;
   onDispatch: (rule: ReminderConfiguration) => void;
   onTest: (rule: ReminderConfiguration) => void;
@@ -71,6 +73,7 @@ const RulesTab = ({
   togglePending,
   onCreate,
   onEdit,
+  onDuplicate,
   onToggle,
   onDispatch,
   onTest,
@@ -229,7 +232,7 @@ const RulesTab = ({
                           variant="outline"
                           className="border-emerald-600/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-normal text-[11px] gap-1"
                         >
-                          <Check className="h-3 w-3" /> 2 botões: Confirmar / Não Confirmar
+                          <Check className="h-3 w-3" /> 2 botões: Confirmar / Cancelar
                         </Badge>
                       ) : (
                         <Badge
@@ -332,7 +335,7 @@ const RulesTab = ({
                                   ✓ Confirmar
                                 </div>
                                 <div className="flex items-center justify-center rounded-md border border-rose-600/30 bg-rose-500/10 py-1 text-xs font-semibold text-rose-700 dark:text-rose-300">
-                                  ✕ Não Confirmar
+                                  ✕ Cancelar
                                 </div>
                               </div>
                             )}
@@ -363,6 +366,12 @@ const RulesTab = ({
                     <FlaskConical className="h-4 w-4" aria-hidden="true" />
                     Enviar teste
                   </Button>
+                  {onDuplicate && (
+                    <Button variant="outline" className="min-h-11 gap-1.5" onClick={() => onDuplicate(rule)}>
+                      <Copy className="h-4 w-4" aria-hidden="true" />
+                      Duplicar
+                    </Button>
+                  )}
                   <Button variant="outline" className="min-h-11 gap-1.5" onClick={() => onEdit(rule)}>
                     <Pencil className="h-4 w-4" aria-hidden="true" />
                     Editar

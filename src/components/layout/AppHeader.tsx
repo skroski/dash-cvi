@@ -7,6 +7,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import NotificationsBell from '@/components/notifications/NotificationsBell';
 import AtendenteAtivoSelector from '@/components/atendentes/AtendenteAtivoSelector';
 import HelpMenuButton from '@/components/help/HelpMenuButton';
+import { CopilotoHeaderTrigger } from '@/components/copiloto/CopilotoLateralPanel';
 import StatusSelector from '@/components/atendentes/StatusSelector';
 import { getRouteTitle } from './routeMeta';
 import { useAuth } from '@/context/AuthContext';
@@ -44,6 +45,7 @@ const AppHeader = () => {
         </Button>
         <NotificationsBell />
         <HelpMenuButton />
+        <CopilotoHeaderTrigger />
         <ThemeToggle />
       </div>
     </header>

@@ -275,7 +275,7 @@ async function enviarUazapiComBotoes(
   clinica: string,
   botoes: Array<{ id: string; text: string }> = [
     { id: 'confirmar_agendamento', text: 'Confirmar' },
-    { id: 'nao_confirmar_agendamento', text: 'Não Confirmar' },
+    { id: 'cancelar_agendamento', text: 'Cancelar' },
   ]
 ) {
   const base = segredo('UAZAPI_SERVER_URL')?.replace(/\/$/, '');
@@ -285,6 +285,7 @@ async function enviarUazapiComBotoes(
   }
 
   const choices = botoes.map((b) => `${b.text}|${b.id}`);
+  const cleanFooter = clinica?.trim() ? clinica.trim().slice(0, 60) : undefined;
 
   try {
     const resposta = await fetch(`${base}/send/menu`, {
@@ -294,7 +295,7 @@ async function enviarUazapiComBotoes(
         number: numero,
         type: 'button',
         text: texto,
-        footerText: clinica || undefined,
+        footerText: cleanFooter,
         choices,
       }),
       signal: AbortSignal.timeout(20_000),
@@ -313,7 +314,7 @@ async function enviarUazapiComBotoes(
         number: numero,
         type: 'button_legacy',
         text: texto,
-        footerText: clinica || undefined,
+        footerText: cleanFooter,
         choices,
       }),
       signal: AbortSignal.timeout(20_000),

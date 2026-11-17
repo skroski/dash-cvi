@@ -35,6 +35,7 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { AtendenteAtivoProvider } from "./context/AtendenteAtivoContext";
 
 const queryClient = new QueryClient();
+const PipelinesPage = lazy(() => import("./pages/PipelinesPage"));
 const RemindersPage = lazy(() => import("./pages/RemindersPage"));
 const SatisfactionSurveysPage = lazy(
   () => import("./pages/SatisfactionSurveysPage")
@@ -66,6 +67,23 @@ const App = () => (
                       <Route path="/groups" element={<ChatsDashboard />} />
                       <Route path="/knowledge" element={<KnowledgeManager />} />
                       <Route path="/clients" element={<ClientsDashboard />} />
+                      <Route
+                        path="/pipelines"
+                        element={
+                          <Suspense
+                            fallback={
+                              <div
+                                className="flex h-full items-center justify-center text-sm text-muted-foreground"
+                                role="status"
+                              >
+                                Carregando pipelines...
+                              </div>
+                            }
+                          >
+                            <PipelinesPage />
+                          </Suspense>
+                        }
+                      />
                       <Route path="/attendants" element={<AttendantsPage />} />
                       <Route path="/users" element={<UsersPage />} />
                       <Route path="/evolution" element={<Evolution />} />

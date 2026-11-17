@@ -7,6 +7,7 @@ import {
   FileAudio,
   Headset,
   Home,
+  Kanban,
   type LucideIcon,
   MessageSquare,
   MonitorPlay,
@@ -54,6 +55,7 @@ export const MODULOS: Modulo[] = [
   { url: '/chats', title: 'Conversas', icon: MessageSquare, papeis: TODOS, grupo: 'menu' },
   { url: '/groups', title: 'Grupos', icon: UsersRound, papeis: TODOS, grupo: 'menu' },
   { url: '/clients', title: 'Clientes', icon: Users, papeis: TODOS, grupo: 'menu' },
+  { url: '/pipelines', title: 'Pipelines & Leads', icon: Kanban, papeis: TODOS, grupo: 'menu' },
   { url: '/reminders', title: 'Lembretes', icon: BellRing, papeis: TODOS, grupo: 'menu' },
   // Calendário desabilitado temporariamente
   // { url: '/schedule', title: 'Calendário & Agenda', icon: CalendarDays, papeis: VET_E_STAFF, grupo: 'menu' },
